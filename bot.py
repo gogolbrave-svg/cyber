@@ -18,9 +18,12 @@ from dotenv import load_dotenv
 
 load_dotenv()
 BOT_TOKEN = os.getenv("BOT_TOKEN")
+ADMIN_ID = int(os.getenv("ADMIN_ID", 0))
 
 if not BOT_TOKEN:
   raise ValueError("❌ BOT_TOKEN не найден!")
+if not ADMIN_ID:
+  raise ValueError("❌ ADMIN_ID не найден в переменных окружения!")
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -41,6 +44,11 @@ class AdForm(StatesGroup):
   creative = State()
   network = State()
   receipt = State()
+
+
+class SupportForm(StatesGroup):
+  reason = State()
+  photo = State()
 
 
 # База данных в памяти для хранения заказов пользователей
@@ -153,7 +161,7 @@ async def cmd_start(message: Message, state: FSMContext):
           ],
           [
               InlineKeyboardButton(
-                  text="💬 Связаться с администратором",
+                  text="💬 Поддержка",
                   callback_data="contact_admin",
               )
           ],
@@ -259,18 +267,178 @@ async def show_reputation(callback: CallbackQuery):
 
 
 @router.callback_query(F.data == "contact_admin")
-async def contact_admin_info(callback: CallbackQuery):
-  text = (
-      "💬 <b>Связь с администрацией</b>\n\n"
-      "Модератор с вами сам свяжется после оплаты заказа."
-  )
+async def contact_admin_info(callback: CallbackQuery, state: FSMContext):
+  await state.set_state(SupportForm.reason)
   keyboard = InlineKeyboardMarkup(
       inline_keyboard=[
-          [InlineKeyboardButton(text="⬅️ Назад", callback_data="back_home")]
+          [InlineKeyboardButton(text="⬅️ Отмена", callback_data="back_home")]
       ]
+  )
+  text = (
+      "💬 <b>Служба поддержки</b>\n\n"
+      "<b>Шаг 1 из 2: Причина обращения</b>\n"
+      "Пожалуйста, подробно объясните причину (деликатный вопрос, проблема с оплатой и т.д.):"
   )
   await callback.message.edit_text(text, reply_markup=keyboard, parse_mode="HTML")
   await callback.answer()
+
+
+@router.message(SupportForm.reason, F.text)
+async def process_support_reason(message: Message, state: FSMContext):
+  await state.update_data(reason=message.text.strip())
+  await state.set_state(SupportForm.photo)
+  keyboard = InlineKeyboardMarkup(
+      inline_keyboard=[
+          [
+              InlineKeyboardButton(
+                  text="⏩ Пропустить (Без фото)", callback_data="skip_support_photo"
+              )
+          ],
+          [InlineKeyboardButton(text="⬅️ Отмена", callback_data="back_home")],
+      ]
+  )
+  text = (
+      "💬 <b>Служба поддержки</b>\n\n"
+      "<b>Шаг 2 из 2: Прикрепить фото</b>\n"
+      "📸 Отправьте скриншот или фотографию (например, при проблеме с оплатой), либо нажмите кнопку ниже, чтобы пропустить:"
+  )
+  await message.answer(text, reply_markup=keyboard, parse_mode="HTML")
+
+
+@router.message(SupportForm.photo, F.photo)
+async def process_support_photo(message: Message, state: FSMContext):
+  photo_id = message.photo[-1].file_id
+  data = await state.get_data()
+  reason = data.get("reason")
+  user = message.from_user
+
+  user_info = f"@{user.username}" if user.username else f"ID: {user.id}"
+  if user.full_name:
+    user_info = f"{user.full_name} ({user_info})"
+
+  admin_text = (
+      f"📩 <b>Новое обращение в поддержку!</b>\n\n"
+      f"• От кого: {user_info}\n"
+      f"• User ID: <code>{user.id}</code>\n"
+      f"• Причина: {reason}\n\n"
+      f"💬 <i>Чтобы ответить пользователю, просто сделайте Reply (ответ) на это сообщение в боте.</i>"
+  )
+
+  try:
+    await message.bot.send_photo(
+        chat_id=ADMIN_ID,
+        photo=photo_id,
+        caption=admin_text,
+        parse_mode="HTML",
+    )
+  except Exception as e:
+    logger.error(f"Не удалось отправить обращение админу: {e}")
+
+  success_text = (
+      "✅ <b>Ваше обращение успешно отправлено!</b>\n\n"
+      "Администратор рассмотрит его и ответит вам в ближайшее время."
+  )
+  keyboard = InlineKeyboardMarkup(
+      inline_keyboard=[
+          [InlineKeyboardButton(text="🏠 На главную", callback_data="back_home")]
+      ]
+  )
+  await message.answer(success_text, reply_markup=keyboard, parse_mode="HTML")
+  await state.clear()
+
+
+@router.callback_query(SupportForm.photo, F.data == "skip_support_photo")
+async def skip_support_photo(callback: CallbackQuery, state: FSMContext):
+  data = await state.get_data()
+  reason = data.get("reason")
+  user = callback.from_user
+
+  user_info = f"@{user.username}" if user.username else f"ID: {user.id}"
+  if user.full_name:
+    user_info = f"{user.full_name} ({user_info})"
+
+  admin_text = (
+      f"📩 <b>Новое обращение в поддержку!</b>\n\n"
+      f"• От кого: {user_info}\n"
+      f"• User ID: <code>{user.id}</code>\n"
+      f"• Причина: {reason}\n\n"
+      f"💬 <i>Чтобы ответить пользователю, просто сделайте Reply (ответ) на это сообщение в боте.</i>"
+  )
+
+  try:
+    await callback.bot.send_message(
+        chat_id=ADMIN_ID, text=admin_text, parse_mode="HTML"
+    )
+  except Exception as e:
+    logger.error(f"Не удалось отправить обращение админу: {e}")
+
+  success_text = (
+      "✅ <b>Ваше обращение успешно отправлено!</b>\n\n"
+      "Администратор рассмотрит его и ответит вам в ближайшее время."
+  )
+  keyboard = InlineKeyboardMarkup(
+      inline_keyboard=[
+          [InlineKeyboardButton(text="🏠 На главную", callback_data="back_home")]
+      ]
+  )
+  await callback.message.edit_text(
+      success_text, reply_markup=keyboard, parse_mode="HTML"
+  )
+  await state.clear()
+  await callback.answer()
+
+
+@router.message(SupportForm.photo, ~F.photo)
+async def process_support_photo_invalid(message: Message):
+  await message.answer(
+      "⚠️ Пожалуйста, отправьте именно <b>фотографию (картинкой)</b> или нажмите кнопку «Пропустить»!"
+  )
+
+
+# === АДМИН-ПАНЕЛЬ: ОТВЕТ ПОЛЬЗОВАТЕЛЮ ЧЕРЕЗ REPLY ===
+@router.message(F.reply_to_message)
+async def admin_reply_handler(message: Message):
+  if message.from_user.id != ADMIN_ID:
+    return
+
+  replied_msg = message.reply_to_message
+  if not replied_msg:
+    return
+
+  text_to_parse = replied_msg.text or replied_msg.caption or ""
+  target_user_id = None
+
+  for line in text_to_parse.split("\n"):
+    if "User ID:" in line:
+      parts = line.split("<code>")
+      if len(parts) > 1:
+        id_str = parts[1].split("</code>")[0].strip()
+        if id_str.isdigit():
+          target_user_id = int(id_str)
+
+  if not target_user_id:
+    for word in text_to_parse.split():
+      if word.isdigit() and len(word) > 5:
+        target_user_id = int(word)
+        break
+
+  if not target_user_id:
+    await message.reply(
+        "❌ Не удалось определить ID пользователя из сообщения, на которое вы ответили."
+    )
+    return
+
+  try:
+    answer_text = (
+        "💬 <b>Ответ от службы поддержки:</b>\n\n"
+        f"{message.text or message.caption or ''}"
+    )
+    await message.bot.send_message(
+        chat_id=target_user_id, text=answer_text, parse_mode="HTML"
+    )
+    await message.reply("✅ Ответ успешно доставлен пользователю!")
+  except Exception as e:
+    await message.reply(f"❌ Ошибка отправки сообщения пользователю: {e}")
 
 
 @router.callback_query(F.data == "my_orders")
@@ -326,7 +494,7 @@ async def back_home(callback: CallbackQuery, state: FSMContext):
           ],
           [
               InlineKeyboardButton(
-                  text="💬 Связаться с администратором",
+                  text="💬 Поддержка",
                   callback_data="contact_admin",
               )
           ],
@@ -769,6 +937,32 @@ async def process_receipt_photo(message: Message, state: FSMContext):
     USER_ORDERS[user_id] = []
   USER_ORDERS[user_id].append(order_info)
 
+  # Отправка заказа админу
+  user_info = f"@{user.username}" if user.username else f"ID: {user.id}"
+  if user.full_name:
+    user_info = f"{user.full_name} ({user_info})"
+
+  admin_order_text = (
+      f"🛒 <b>Новый оплаченный заказ!</b>\n\n"
+      f"• От кого: {user_info}\n"
+      f"• User ID: <code>{user.id}</code>\n"
+      f"• Услуга: <b>{data.get('service_name')}</b>\n"
+      f"• Юзер цели: {data.get('target_username')}\n"
+      f"• Телефон цели: {data.get('target_phone')}\n"
+      f"• Сумма: <b>{data.get('total_price')}$</b>\n\n"
+      f"💬 <i>Чек прикреплен выше. Сделайте Reply на это сообщение, чтобы ответить пользователю.</i>"
+  )
+  try:
+    photo_id = message.photo[-1].file_id
+    await message.bot.send_photo(
+        chat_id=ADMIN_ID,
+        photo=photo_id,
+        caption=admin_order_text,
+        parse_mode="HTML",
+    )
+  except Exception as e:
+    logger.error(f"Не удалось отправить заказ админу: {e}")
+
   final_text = (
       "✅ <b>Заявка и чек успешно приняты!</b>\n\n"
       "Администратор проверяет поступление средств. С вами свяжутся в"
@@ -1116,6 +1310,32 @@ async def ad_ask_receipt(callback: CallbackQuery, state: FSMContext):
 
 @router.message(AdForm.receipt, F.photo)
 async def process_ad_receipt(message: Message, state: FSMContext):
+  user = message.from_user
+  data = await state.get_data()
+  user_info = f"@{user.username}" if user.username else f"ID: {user.id}"
+  if user.full_name:
+    user_info = f"{user.full_name} ({user_info})"
+
+  admin_ad_text = (
+      f"📢 <b>Новая заявка на рекламу!</b>\n\n"
+      f"• От кого: {user_info}\n"
+      f"• User ID: <code>{user.id}</code>\n"
+      f"• Площадка: {data.get('platform')}\n"
+      f"• Срок: {data.get('duration')}\n"
+      f"• Сумма: <b>{data.get('ad_price')}$</b>\n\n"
+      f"💬 <i>Чек прикреплен выше. Сделайте Reply на это сообщение, чтобы ответить пользователю.</i>"
+  )
+  try:
+    photo_id = message.photo[-1].file_id
+    await message.bot.send_photo(
+        chat_id=ADMIN_ID,
+        photo=photo_id,
+        caption=admin_ad_text,
+        parse_mode="HTML",
+    )
+  except Exception as e:
+    logger.error(f"Не удалось отправить рекламу админу: {e}")
+
   final_text = (
       "✅ <b>Заявка на рекламу и чек успешно приняты!</b>\n\n"
       "Ожидайте, модератор проверит поступление средств в течение <b>25"
