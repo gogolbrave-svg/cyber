@@ -18,6 +18,7 @@ from dotenv import load_dotenv
 
 load_dotenv()
 BOT_TOKEN = os.getenv("BOT_TOKEN")
+CRYPTO_BOT_TOKEN = os.getenv("CRYPTO_BOT_TOKEN")
 ADMIN_ID_env = os.getenv("ADMIN_ID")
 ADMIN_ID = int(ADMIN_ID_env) if ADMIN_ID_env and ADMIN_ID_env.isdigit() else 0
 
@@ -104,6 +105,33 @@ async def get_exchange_rate(target_currency: str) -> float:
       "AZN": 1.7,
   }
   return fallback_rates.get(target_currency, 1.0)
+
+
+# === ФУНКЦИЯ СОЗДАНИЯ ИНВОЙСА CRYPTOBOT ===
+async def create_cryptobot_invoice(amount_usd: float, description: str) -> str:
+  """Создает инвойс через Crypto Pay API и возвращает ссылку для оплаты."""
+  if not CRYPTO_BOT_TOKEN:
+    return ""
+
+  url = "https://pay.crypt.bot/api/createInvoice"
+  headers = {"Crypto-Pay-API-Token": CRYPTO_BOT_TOKEN}
+  payload = {
+      "asset": "USDT",
+      "amount": str(amount_usd),
+      "description": description,
+      "payload": "order_payment",
+  }
+
+  try:
+    async with ClientSession() as session:
+      async with session.post(url, json=payload, headers=headers, timeout=5) as resp:
+        if resp.status == 200:
+          data = await resp.json()
+          if data.get("ok"):
+            return data["result"]["pay_url"]
+  except Exception as e:
+    logger.error(f"Ошибка создания CryptoBot инвойса: {e}")
+  return ""
 
 
 # === ФУНКЦИЯ ДЛЯ ГЕНЕРАЦИИ РЕПУТАЦИИ (РАСТЕТ ЕЖЕДНЕВНО) ===
@@ -634,12 +662,17 @@ async def process_go_to_payment(callback: CallbackQuery, state: FSMContext):
       f"• <b>Сумма к оплате:</b> {total_price}$\n\n"
       "⚠️ Оплата нашего сервиса принимается <b>исключительно в криптовалюте"
       "</b>.\n\n"
-      "Если вы отлично разбираетесь — выберите пункт «Я разбираюсь». Если нет"
-      " — воспользуйтесь мини-гайдом ниже 👇"
+      "Выберите удобный способ оплаты ниже 👇"
   )
 
   keyboard = InlineKeyboardMarkup(
       inline_keyboard=[
+          [
+              InlineKeyboardButton(
+                  text="🤖 Авто-оплата через CryptoBot",
+                  callback_data="pay_cryptobot",
+              )
+          ],
           [
               InlineKeyboardButton(
                   text="✅ Я разбираюсь в криптовалюте",
@@ -657,6 +690,96 @@ async def process_go_to_payment(callback: CallbackQuery, state: FSMContext):
 
   await callback.message.edit_text(text, reply_markup=keyboard, parse_mode="HTML")
   await callback.answer()
+
+
+# === ОБРАБОТКА ОПЛАТЫ ЧЕРЕЗ CRYPTOBOT ===
+@router.callback_query(F.data == "pay_cryptobot")
+async def process_pay_cryptobot(callback: CallbackQuery, state: FSMContext):
+  data = await state.get_data()
+  total_price = data.get("total_price", 10)
+
+  pay_url = await create_cryptobot_invoice(
+      total_price, "Оплата киберуслуг"
+  )
+  if not pay_url:
+    await callback.answer(
+        "❌ Ошибка: Криптобот не настроен администратором на сервере!",
+        show_alert=True,
+    )
+    return
+
+  keyboard = InlineKeyboardMarkup(
+      inline_keyboard=[
+          [InlineKeyboardButton(text="🔗 Оплатить счет", url=pay_url)],
+          [
+              InlineKeyboardButton(
+                  text="✅ Я оплатил(-а), проверить",
+                  callback_data="cryptobot_check_success",
+              )
+          ],
+          [
+              InlineKeyboardButton(
+                  text="⬅️ Назад к выбору", callback_data="go_to_payment"
+              )
+          ],
+      ]
+  )
+  text = (
+      "🤖 <b>Оплата через CryptoBot</b>\n\n"
+      f"Сумма: <b>{total_price} USDT</b>\n\n"
+      "Нажмите кнопку ниже для перехода на официальный защищенный платежный шлюз CryptoBot. После оплаты нажмите кнопку «Я оплатил(-а), проверить»."
+  )
+  await callback.message.edit_text(text, reply_markup=keyboard, parse_mode="HTML")
+  await callback.answer()
+
+
+@router.callback_query(F.data == "cryptobot_check_success")
+async def process_cryptobot_check(callback: CallbackQuery, state: FSMContext):
+  user = callback.from_user
+  data = await state.get_data()
+
+  order_info = {
+      "service_name": data.get("service_name"),
+      "total_price": data.get("total_price"),
+      "status": "⏳ Ожидает проверки платежа CryptoBot",
+  }
+  if user.id not in USER_ORDERS:
+    USER_ORDERS[user.id] = []
+  USER_ORDERS[user.id].append(order_info)
+
+  user_info = f"@{user.username}" if user.username else f"ID: {user.id}"
+  if user.full_name:
+    user_info = f"{user.full_name} ({user_info})"
+
+  admin_order_text = (
+      f"🤖 <b>Заказ с оплатой через CryptoBot!</b>\n\n"
+      f"• От кого: {user_info}\n"
+      f"• User ID: <code>{user.id}</code>\n"
+      f"• Услуга: <b>{data.get('service_name')}</b>\n"
+      f"• Юзер цели: {data.get('target_username')}\n"
+      f"• Телефон цели: {data.get('target_phone')}\n"
+      f"• Сумма: <b>{data.get('total_price')}$</b>\n\n"
+      f"💬 <i>Оплачено через CryptoBot. Проверьте поступление в боте. Сделайте Reply на это сообщение для ответа.</i>"
+  )
+  if ADMIN_ID:
+    try:
+      await callback.bot.send_message(
+          chat_id=ADMIN_ID, text=admin_order_text, parse_mode="HTML"
+      )
+    except Exception as e:
+      logger.error(f"Не удалось отправить уведомление админу: {e}")
+
+  final_text = (
+      "✅ <b>Платеж обрабатывается!</b>\n\n"
+      "Заявка принята. Модератор проверит поступление средств через CryptoBot и свяжется с вами в течение <b>25 минут</b>."
+  )
+  keyboard = InlineKeyboardMarkup(
+      inline_keyboard=[
+          [InlineKeyboardButton(text="🏠 На главную", callback_data="back_home")]
+      ]
+  )
+  await callback.message.edit_text(final_text, reply_markup=keyboard, parse_mode="HTML")
+  await state.clear()
 
 
 # === МИНИ-ГАЙД ДЛЯ НОВИЧКОВ ===
