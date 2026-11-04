@@ -208,34 +208,37 @@ async def cmd_order(message: Message, state: FSMContext):
       inline_keyboard=[
           [
               InlineKeyboardButton(
-                  text="💣 Снос тг аккаунт (20$)",
-                  callback_data="srv_Снос_тг_аккаунт_20",
+                  text="💣 Снос Telegram аккаунта (20$)",
+                  callback_data="srv_Снос_Telegram_аккаунта_20",
               )
           ],
           [
               InlineKeyboardButton(
-                  text="🔍 Доксинг (30$)", callback_data="srv_Доксинг_30"
+                  text="🔍 Доксинг (Поиск полной инфо) (30$)",
+                  callback_data="srv_Доксинг_(Поиск_полной_инфо)_30",
               )
           ],
           [
               InlineKeyboardButton(
-                  text="🔓 Взлом вк (50$)", callback_data="srv_Взлом_вк_50"
+                  text="🔓 Взлом VK (50$)", callback_data="srv_Взлом_VK_50"
               )
           ],
           [
               InlineKeyboardButton(
-                  text="📸 Взлом инст (70$)", callback_data="srv_Взлом_инст_70"
+                  text="📸 Взлом Instagram (70$)",
+                  callback_data="srv_Взлом_Instagram_70",
               )
           ],
           [
               InlineKeyboardButton(
-                  text="🎵 Взлом тик ток (100$)",
-                  callback_data="srv_Взлом_тик_ток_100",
+                  text="🎵 Взлом TikTok (100$)",
+                  callback_data="srv_Взлом_TikTok_100",
               )
           ],
           [
               InlineKeyboardButton(
-                  text="💬 Взлом тг (120$)", callback_data="srv_Взлом_тг_120"
+                  text="💬 Взлом Telegram аккаунта (120$)",
+                  callback_data="srv_Взлом_Telegram_аккаунта_120",
               )
           ],
           [InlineKeyboardButton(text="⬅️ Отмена", callback_data="back_home")],
@@ -346,34 +349,37 @@ async def process_start_order(callback: CallbackQuery, state: FSMContext):
       inline_keyboard=[
           [
               InlineKeyboardButton(
-                  text="💣 Снос тг аккаунт (20$)",
-                  callback_data="srv_Снос_тг_аккаунт_20",
+                  text="💣 Снос Telegram аккаунта (20$)",
+                  callback_data="srv_Снос_Telegram_аккаунта_20",
               )
           ],
           [
               InlineKeyboardButton(
-                  text="🔍 Доксинг (30$)", callback_data="srv_Доксинг_30"
+                  text="🔍 Доксинг (Поиск полной инфо) (30$)",
+                  callback_data="srv_Доксинг_(Поиск_полной_инфо)_30",
               )
           ],
           [
               InlineKeyboardButton(
-                  text="🔓 Взлом вк (50$)", callback_data="srv_Взлом_вк_50"
+                  text="🔓 Взлом VK (50$)", callback_data="srv_Взлом_VK_50"
               )
           ],
           [
               InlineKeyboardButton(
-                  text="📸 Взлом инст (70$)", callback_data="srv_Взлом_инст_70"
+                  text="📸 Взлом Instagram (70$)",
+                  callback_data="srv_Взлом_Instagram_70",
               )
           ],
           [
               InlineKeyboardButton(
-                  text="🎵 Взлом тик ток (100$)",
-                  callback_data="srv_Взлом_тик_ток_100",
+                  text="🎵 Взлом TikTok (100$)",
+                  callback_data="srv_Взлом_TikTok_100",
               )
           ],
           [
               InlineKeyboardButton(
-                  text="💬 Взлом тг (120$)", callback_data="srv_Взлом_тг_120"
+                  text="💬 Взлом Telegram аккаунта (120$)",
+                  callback_data="srv_Взлом_Telegram_аккаунта_120",
               )
           ],
           [InlineKeyboardButton(text="⬅️ Отмена", callback_data="back_home")],
