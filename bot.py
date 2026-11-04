@@ -208,36 +208,34 @@ async def cmd_order(message: Message, state: FSMContext):
       inline_keyboard=[
           [
               InlineKeyboardButton(
-                  text="💣 Снос ТГ аккаунта (10$)",
-                  callback_data="srv_Снос_ТГ_аккаунта_10",
+                  text="💣 Снос тг аккаунт (20$)",
+                  callback_data="srv_Снос_тг_аккаунт_20",
               )
           ],
           [
               InlineKeyboardButton(
-                  text="🔍 Доксинг (поиск полной инфо) (15$)",
-                  callback_data="srv_Доксинг_(поиск_полной_инфо)_15",
+                  text="🔍 Доксинг (30$)", callback_data="srv_Доксинг_30"
               )
           ],
           [
               InlineKeyboardButton(
-                  text="🔓 Взлом VK (20$)", callback_data="srv_Взлом_VK_20"
+                  text="🔓 Взлом вк (50$)", callback_data="srv_Взлом_вк_50"
               )
           ],
           [
               InlineKeyboardButton(
-                  text="📸 Взлом Instagram (40$)",
-                  callback_data="srv_Взлом_Instagram_40",
+                  text="📸 Взлом инст (70$)", callback_data="srv_Взлом_инст_70"
               )
           ],
           [
               InlineKeyboardButton(
-                  text="🎵 Взлом ТикТок (60$)",
-                  callback_data="srv_Взлом_ТикТок_60",
+                  text="🎵 Взлом тик ток (100$)",
+                  callback_data="srv_Взлом_тик_ток_100",
               )
           ],
           [
               InlineKeyboardButton(
-                  text="💬 Взлом Тг (80$)", callback_data="srv_Взлом_Тг_80"
+                  text="💬 Взлом тг (120$)", callback_data="srv_Взлом_тг_120"
               )
           ],
           [InlineKeyboardButton(text="⬅️ Отмена", callback_data="back_home")],
@@ -292,7 +290,7 @@ async def show_my_orders(callback: CallbackQuery):
 
   keyboard = InlineKeyboardMarkup(
       inline_keyboard=[
-          [InlineKeyboardButton(text="⬅️ На главную", callback_data="back_home")]
+          [InlineKeyboardButton(text="⬅️ Назад", callback_data="back_home")]
       ]
   )
   await callback.message.edit_text(text, reply_markup=keyboard, parse_mode="HTML")
@@ -348,36 +346,34 @@ async def process_start_order(callback: CallbackQuery, state: FSMContext):
       inline_keyboard=[
           [
               InlineKeyboardButton(
-                  text="💣 Снос ТГ аккаунта (10$)",
-                  callback_data="srv_Снос_ТГ_аккаунта_10",
+                  text="💣 Снос тг аккаунт (20$)",
+                  callback_data="srv_Снос_тг_аккаунт_20",
               )
           ],
           [
               InlineKeyboardButton(
-                  text="🔍 Доксинг (поиск полной инфо) (15$)",
-                  callback_data="srv_Доксинг_(поиск_полной_инфо)_15",
+                  text="🔍 Доксинг (30$)", callback_data="srv_Доксинг_30"
               )
           ],
           [
               InlineKeyboardButton(
-                  text="🔓 Взлом VK (20$)", callback_data="srv_Взлом_VK_20"
+                  text="🔓 Взлом вк (50$)", callback_data="srv_Взлом_вк_50"
               )
           ],
           [
               InlineKeyboardButton(
-                  text="📸 Взлом Instagram (40$)",
-                  callback_data="srv_Взлом_Instagram_40",
+                  text="📸 Взлом инст (70$)", callback_data="srv_Взлом_инст_70"
               )
           ],
           [
               InlineKeyboardButton(
-                  text="🎵 Взлом ТикТок (60$)",
-                  callback_data="srv_Взлом_ТикТок_60",
+                  text="🎵 Взлом тик ток (100$)",
+                  callback_data="srv_Взлом_тик_ток_100",
               )
           ],
           [
               InlineKeyboardButton(
-                  text="💬 Взлом Тг (80$)", callback_data="srv_Взлом_Тг_80"
+                  text="💬 Взлом тг (120$)", callback_data="srv_Взлом_тг_120"
               )
           ],
           [InlineKeyboardButton(text="⬅️ Отмена", callback_data="back_home")],
@@ -830,44 +826,37 @@ async def process_start_ads(callback: CallbackQuery, state: FSMContext):
 @router.callback_query(AdForm.platform, F.data.startswith("adplat_"))
 async def process_ad_platform(callback: CallbackQuery, state: FSMContext):
   plat_code = callback.data.split("_")[1]
-  platform_name = "CYBER BOT" if plat_code == "bot" else "CYBER CHANNEL"
+  platform_name = "Реклама в боте" if plat_code == "bot" else "Реклама в канале"
   await state.update_data(platform=platform_name, plat_code=plat_code)
   await state.set_state(AdForm.duration)
 
-  if plat_code == "bot":
-    kb_list = [
-        [InlineKeyboardButton(text="24 часа = 5$", callback_data="addur_24h_5")],
-        [InlineKeyboardButton(text="3 дня = 10$", callback_data="addur_3d_10")],
-        [InlineKeyboardButton(text="7 дней = 25$", callback_data="addur_7d_25")],
-        [
-            InlineKeyboardButton(
-                text="30 дней = 100$", callback_data="addur_30d_100"
-            )
-        ],
-    ]
-  else:
-    kb_list = [
-        [InlineKeyboardButton(text="24 часа = 10$", callback_data="addur_24h_10")],
-        [InlineKeyboardButton(text="3 дня = 20$", callback_data="addur_3d_20")],
-        [
-            InlineKeyboardButton(
-                text="7 дней = 50$", callback_data="addur_7d_50"
-            )
-        ],
-        [
-            InlineKeyboardButton(
-                text="30 дней = 200$", callback_data="addur_30d_200"
-            )
-        ],
-    ]
-
+  # Новые цены на рекламу как для бота, так и для канала
+  kb_list = [
+      [InlineKeyboardButton(text="24 часа = 10$", callback_data="addur_24h_10")],
+      [InlineKeyboardButton(text="3 дня = 20$", callback_data="addur_3d_20")],
+      [InlineKeyboardButton(text="7 дней = 50$", callback_data="addur_7d_50")],
+      [InlineKeyboardButton(text="30 дней = 200$", callback_data="addur_30d_200")],
+  ]
   kb_list.append([InlineKeyboardButton(text="⬅️ Назад", callback_data="start_ads")])
   keyboard = InlineKeyboardMarkup(inline_keyboard=kb_list)
 
-  text = (
-      f"📢 <b>Площадка: {platform_name}</b>\n\n"
-      "<b>Выберите срок размещения рекламы:</b>"
-  )
+  if plat_code == "bot":
+    current_date = datetime.date.today()
+    base_date = datetime.date(2026, 1, 1)
+    days_passed = max(0, (current_date - base_date).days)
+    total_users = 1037 + days_passed * 41
+
+    text = (
+        f"🤖 <b>Площадка: Реклама в боте</b>\n"
+        f"👥 База: <b>{total_users} пользователей</b> (каждый день +41)\n\n"
+        "<b>Выберите срок размещения рекламы:</b>"
+    )
+  else:
+    text = (
+        "📢 <b>Площадка: Реклама в канале</b>\n\n"
+        "<b>Выберите срок размещения рекламы:</b>"
+    )
+
   await callback.message.edit_text(text, reply_markup=keyboard, parse_mode="HTML")
   await callback.answer()
 
