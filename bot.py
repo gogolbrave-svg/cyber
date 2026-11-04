@@ -18,12 +18,11 @@ from dotenv import load_dotenv
 
 load_dotenv()
 BOT_TOKEN = os.getenv("BOT_TOKEN")
-ADMIN_ID = int(os.getenv("ADMIN_ID", 0))
+ADMIN_ID_env = os.getenv("ADMIN_ID")
+ADMIN_ID = int(ADMIN_ID_env) if ADMIN_ID_env and ADMIN_ID_env.isdigit() else 0
 
 if not BOT_TOKEN:
   raise ValueError("❌ BOT_TOKEN не найден!")
-if not ADMIN_ID:
-  raise ValueError("❌ ADMIN_ID не найден в переменных окружения!")
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -324,15 +323,16 @@ async def process_support_photo(message: Message, state: FSMContext):
       f"💬 <i>Чтобы ответить пользователю, просто сделайте Reply (ответ) на это сообщение в боте.</i>"
   )
 
-  try:
-    await message.bot.send_photo(
-        chat_id=ADMIN_ID,
-        photo=photo_id,
-        caption=admin_text,
-        parse_mode="HTML",
-    )
-  except Exception as e:
-    logger.error(f"Не удалось отправить обращение админу: {e}")
+  if ADMIN_ID:
+    try:
+      await message.bot.send_photo(
+          chat_id=ADMIN_ID,
+          photo=photo_id,
+          caption=admin_text,
+          parse_mode="HTML",
+      )
+    except Exception as e:
+      logger.error(f"Не удалось отправить обращение админу: {e}")
 
   success_text = (
       "✅ <b>Ваше обращение успешно отправлено!</b>\n\n"
@@ -365,12 +365,13 @@ async def skip_support_photo(callback: CallbackQuery, state: FSMContext):
       f"💬 <i>Чтобы ответить пользователю, просто сделайте Reply (ответ) на это сообщение в боте.</i>"
   )
 
-  try:
-    await callback.bot.send_message(
-        chat_id=ADMIN_ID, text=admin_text, parse_mode="HTML"
-    )
-  except Exception as e:
-    logger.error(f"Не удалось отправить обращение админу: {e}")
+  if ADMIN_ID:
+    try:
+      await callback.bot.send_message(
+          chat_id=ADMIN_ID, text=admin_text, parse_mode="HTML"
+      )
+    except Exception as e:
+      logger.error(f"Не удалось отправить обращение админу: {e}")
 
   success_text = (
       "✅ <b>Ваше обращение успешно отправлено!</b>\n\n"
@@ -398,7 +399,7 @@ async def process_support_photo_invalid(message: Message):
 # === АДМИН-ПАНЕЛЬ: ОТВЕТ ПОЛЬЗОВАТЕЛЮ ЧЕРЕЗ REPLY ===
 @router.message(F.reply_to_message)
 async def admin_reply_handler(message: Message):
-  if message.from_user.id != ADMIN_ID:
+  if not ADMIN_ID or message.from_user.id != ADMIN_ID:
     return
 
   replied_msg = message.reply_to_message
@@ -952,16 +953,17 @@ async def process_receipt_photo(message: Message, state: FSMContext):
       f"• Сумма: <b>{data.get('total_price')}$</b>\n\n"
       f"💬 <i>Чек прикреплен выше. Сделайте Reply на это сообщение, чтобы ответить пользователю.</i>"
   )
-  try:
-    photo_id = message.photo[-1].file_id
-    await message.bot.send_photo(
-        chat_id=ADMIN_ID,
-        photo=photo_id,
-        caption=admin_order_text,
-        parse_mode="HTML",
-    )
-  except Exception as e:
-    logger.error(f"Не удалось отправить заказ админу: {e}")
+  if ADMIN_ID:
+    try:
+      photo_id = message.photo[-1].file_id
+      await message.bot.send_photo(
+          chat_id=ADMIN_ID,
+          photo=photo_id,
+          caption=admin_order_text,
+          parse_mode="HTML",
+      )
+    except Exception as e:
+      logger.error(f"Не удалось отправить заказ админу: {e}")
 
   final_text = (
       "✅ <b>Заявка и чек успешно приняты!</b>\n\n"
@@ -1325,16 +1327,17 @@ async def process_ad_receipt(message: Message, state: FSMContext):
       f"• Сумма: <b>{data.get('ad_price')}$</b>\n\n"
       f"💬 <i>Чек прикреплен выше. Сделайте Reply на это сообщение, чтобы ответить пользователю.</i>"
   )
-  try:
-    photo_id = message.photo[-1].file_id
-    await message.bot.send_photo(
-        chat_id=ADMIN_ID,
-        photo=photo_id,
-        caption=admin_ad_text,
-        parse_mode="HTML",
-    )
-  except Exception as e:
-    logger.error(f"Не удалось отправить рекламу админу: {e}")
+  if ADMIN_ID:
+    try:
+      photo_id = message.photo[-1].file_id
+      await message.bot.send_photo(
+          chat_id=ADMIN_ID,
+          photo=photo_id,
+          caption=admin_ad_text,
+          parse_mode="HTML",
+      )
+    except Exception as e:
+      logger.error(f"Не удалось отправить рекламу админу: {e}")
 
   final_text = (
       "✅ <b>Заявка на рекламу и чек успешно приняты!</b>\n\n"
