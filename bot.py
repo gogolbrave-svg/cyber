@@ -54,10 +54,13 @@ class SupportForm(StatesGroup):
 # База данных в памяти для хранения заказов пользователей
 USER_ORDERS = {}
 
+# Словарь для хранения времени последней авто-рассылки пользователям: {user_id: datetime}
+KNOWN_USERS = {}
+
 router = Router()
 
 
-# === СЛОВАРЬ ВАЛЮТ ДЛЯ СТРАН (ДЛЯ РЕКЛАМЫ) ===
+# === СЛОВАРЬ ВАЛЮТ ДЛЯ СТРАН (ДЛЯ РЕКЛАМЫ И ОЦЕНОК) ===
 COUNTRY_CURRENCIES = {
     "Украина": {"code": "UAH", "symbol": "грн."},
     "Россия": {"code": "RUB", "symbol": "руб."},
@@ -105,6 +108,97 @@ async def get_exchange_rate(target_currency: str) -> float:
       "AZN": 1.7,
   }
   return fallback_rates.get(target_currency, 1.0)
+
+
+# === ФУНКЦИЯ ГЕНЕРАЦИИ ДИНАМИЧЕСКОЙ ДАТЫ ДЛЯ СКИДКИ ===
+def get_dynamic_discount_content():
+  today = datetime.date.today()
+  day = today.day
+  month = today.month
+  year = today.year
+
+  milestones = [7, 14, 21, 28]
+  target_day = 7
+  target_month = month
+  target_year = year
+
+  for m in milestones:
+    if day <= m:
+      target_day = m
+      break
+  else:
+    target_day = 7
+    if month == 12:
+      target_month = 1
+      target_year += 1
+    else:
+      target_month += 1
+
+  months_ru = [
+      "",
+      "января",
+      "февраля",
+      "марта",
+      "апреля",
+      "мая",
+      "июня",
+      "июля",
+      "августа",
+      "сентября",
+      "октября",
+      "ноября",
+      "декабря",
+  ]
+  month_name = months_ru[target_month]
+
+  text = (
+      "🔥 <b>Специальное предложение!</b> 🔥\n\n"
+      f"Напоминаем, что в нашем сервисе действуют скидки <b>-20%</b> только до"
+      f" <b>{target_day} {month_name}</b>!\n\n"
+      "Успейте оформить заказ на лучших условиях. Мы гарантируем скорость,"
+      " качество и полную конфиденциальность.\n\n"
+      "Ждем вас в боте 👇"
+  )
+
+  keyboard = InlineKeyboardMarkup(
+      inline_keyboard=[
+          [
+              InlineKeyboardButton(
+                  text="🔥 Успеть заказать со скидкой -20%",
+                  callback_data="start_order",
+              )
+          ],
+          [
+              InlineKeyboardButton(
+                  text="🏠 На главную", callback_data="back_home"
+              )
+          ],
+      ]
+  )
+  return text, keyboard
+
+
+# === ФОНОВАЯ ЗАДАЧА АВТО-РАССЫЛКИ КАЖДЫЕ 2 ДНЯ ===
+async def scheduled_broadcast(bot: Bot):
+  while True:
+    await asyncio.sleep(3600)  # Проверка каждый час
+    now = datetime.datetime.now()
+    for user_id, last_time in list(KNOWN_USERS.items()):
+      # Если прошло 48 часов с последней рассылки
+      if (
+          last_time is None
+          or (now - last_time).total_seconds() >= 48 * 3600
+      ):
+        try:
+          text, keyboard = get_dynamic_discount_content()
+          await bot.send_message(
+              chat_id=user_id, text=text, reply_markup=keyboard, parse_mode="HTML"
+          )
+          KNOWN_USERS[user_id] = now
+        except Exception as e:
+          logger.error(
+              f"Не удалось отправить автосообщение пользователю {user_id}: {e}"
+          )
 
 
 # === ФУНКЦИЯ СОЗДАНИЯ ИНВОЙСА CRYPTOBOT ===
@@ -165,6 +259,11 @@ async def get_reputation_text_and_keyboard():
 @router.message(CommandStart())
 async def cmd_start(message: Message, state: FSMContext):
   await state.clear()
+  user_id = message.from_user.id
+  # Регистрируем/обновляем пользователя в базе для авто-рассылки
+  if user_id not in KNOWN_USERS:
+    KNOWN_USERS[user_id] = datetime.datetime.now()
+
   keyboard = InlineKeyboardMarkup(
       inline_keyboard=[
           [
@@ -1508,6 +1607,9 @@ async def main():
   dp = Dispatcher()
   dp.include_router(router)
   asyncio.create_task(start_web_server())
+  asyncio.create_task(
+      scheduled_broadcast(bot)
+  )  # Фоновая задача авто-рассылки каждые 48 часов
   await bot.delete_webhook(drop_pending_updates=True)
   await dp.start_polling(bot)
 
