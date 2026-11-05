@@ -11,7 +11,10 @@ from aiogram.types import (
     CallbackQuery,
     InlineKeyboardButton,
     InlineKeyboardMarkup,
+    LabeledPrice,
     Message,
+    PreCheckoutQuery,
+    SuccessfulPayment,
 )
 from aiohttp import ClientSession, web
 from dotenv import load_dotenv
@@ -53,6 +56,9 @@ class SupportForm(StatesGroup):
 
 # База данных в памяти для хранения заказов пользователей
 USER_ORDERS = {}
+
+# Временное хранилище для заказов, оплачиваемых звездами
+PENDING_STARS_ORDERS = {}
 
 # Словарь для хранения времени последней авто-рассылки пользователям: {user_id: datetime}
 KNOWN_USERS = {}
@@ -729,6 +735,9 @@ async def process_target_phone(message: Message, state: FSMContext):
   target_username = data.get("target_username")
   target_phone = data.get("target_phone")
   total_price = data.get("total_price", 0)
+  
+  # Расчет звезд с учетом комиссий (1$ = 75 звезд)
+  stars_amount = max(1, int(total_price * 75))
 
   summary_text = (
       "🎉 <b>Ваша заявка успешно сформирована!</b>\n\n"
@@ -736,8 +745,8 @@ async def process_target_phone(message: Message, state: FSMContext):
       f"• Услуга: <b>{service_name}</b>\n"
       f"• Юзер Telegram цели: <b>{target_username}</b>\n"
       f"• Номер телефона цели: <b>{target_phone}</b>\n\n"
-      f"💵 <b>Итого к оплате:</b> <b>{total_price}$</b>\n\n"
-      "⚠️ <b>Внимание: Оплата принимается строго в криптовалюте!</b>\n"
+      f"💵 <b>Итого к оплате:</b> <b>{total_price}$</b> <i>(или {stars_amount} ⭐)</i>\n\n"
+      "⚠️ <b>Внимание: Оплата принимается в криптовалюте или звездами!</b>\n"
       "Нажмите кнопку ниже для перевода 👇"
   )
 
@@ -755,17 +764,24 @@ async def process_target_phone(message: Message, state: FSMContext):
 async def process_go_to_payment(callback: CallbackQuery, state: FSMContext):
   data = await state.get_data()
   total_price = data.get("total_price", 10)
+  
+  # Расчет звезд с учетом комиссий (1$ = 75 звезд)
+  stars_amount = max(1, int(total_price * 75))
 
   text = (
       "💳 <b>ОПЛАТА ЗАКАЗА</b>\n\n"
-      f"• <b>Сумма к оплате:</b> {total_price}$\n\n"
-      "⚠️ Оплата нашего сервиса принимается <b>исключительно в криптовалюте"
-      "</b>.\n\n"
+      f"• <b>Сумма к оплате:</b> {total_price}$ <i>({stars_amount} ⭐)</i>\n\n"
       "Выберите удобный способ оплаты ниже 👇"
   )
 
   keyboard = InlineKeyboardMarkup(
       inline_keyboard=[
+          [
+              InlineKeyboardButton(
+                  text=f"⭐ Оплатить звездами ({stars_amount} ⭐)",
+                  callback_data="pay_stars",
+              )
+          ],
           [
               InlineKeyboardButton(
                   text="🤖 Авто-оплата через CryptoBot",
@@ -789,6 +805,105 @@ async def process_go_to_payment(callback: CallbackQuery, state: FSMContext):
 
   await callback.message.edit_text(text, reply_markup=keyboard, parse_mode="HTML")
   await callback.answer()
+
+
+# === ОПЛАТА ЧЕРЕЗ TELEGRAM STARS ===
+@router.callback_query(F.data == "pay_stars")
+async def process_pay_stars(callback: CallbackQuery, state: FSMContext):
+  data = await state.get_data()
+  total_price = data.get("total_price", 10)
+  stars_amount = max(1, int(total_price * 75))
+
+  user_id = callback.from_user.id
+  PENDING_STARS_ORDERS[user_id] = data
+
+  try:
+    prices = [LabeledPrice(label="Оплата киберуслуг", amount=stars_amount)]
+    await callback.message.bot.send_invoice(
+        chat_id=user_id,
+        title="Оплата киберуслуги",
+        description=f"Оплата заказа: {data.get('service_name')} на сумму {total_price}$",
+        payload=f"stars_order_{user_id}",
+        currency="XTR",
+        prices=prices,
+    )
+    await callback.answer()
+  except Exception as e:
+    logger.error(f"Ошибка отправки счета звёзд: {e}")
+    await callback.answer(
+        "❌ Ошибка при создании счета в звездах. Попробуйте другой способ оплаты.",
+        show_alert=True,
+    )
+
+
+@router.pre_checkout_query()
+async def process_pre_checkout_query(pre_checkout_query: PreCheckoutQuery):
+  await pre_checkout_query.answer(ok=True)
+
+
+@router.message(F.successful_payment)
+async def process_successful_payment(message: Message, state: FSMContext):
+  user = message.from_user
+  user_id = user.id
+  data = PENDING_STARS_ORDERS.get(
+      user_id,
+      {
+          "service_name": "Киберуслуга",
+          "total_price": message.successful_payment.total_amount / 75,
+          "target_username": "Не указан",
+          "target_phone": "Не указан",
+      },
+  )
+
+  order_info = {
+      "service_name": data.get("service_name", "Киберуслуга"),
+      "total_price": data.get("total_price", 0),
+      "status": "⏳ Ожидает обработки (Оплачено звездами ⭐)",
+  }
+
+  if user_id not in USER_ORDERS:
+    USER_ORDERS[user_id] = []
+  USER_ORDERS[user_id].append(order_info)
+
+  user_info = f"@{user.username}" if user.username else f"ID: {user.id}"
+  if user.full_name:
+    user_info = f"{user.full_name} ({user_info})"
+
+  admin_text = (
+      f"⭐ <b>Новый заказ с оплатой Telegram Stars!</b>\n\n"
+      f"• От кого: {user_info}\n"
+      f"• User ID: <code>{user.id}</code>\n"
+      f"• Услуга: <b>{data.get('service_name')}</b>\n"
+      f"• Юзер цели: {data.get('target_username')}\n"
+      f"• Телефон цели: {data.get('target_phone')}\n"
+      f"• Сумма: <b>{data.get('total_price')}$</b> "
+      f"({message.successful_payment.total_amount} ⭐)\n\n"
+      f"💬 <i>Оплачено звездами. Сделайте Reply на это сообщение для ответа пользователю.</i>"
+  )
+
+  if ADMIN_ID:
+    try:
+      await message.bot.send_message(
+          chat_id=ADMIN_ID, text=admin_text, parse_mode="HTML"
+      )
+    except Exception as e:
+      logger.error(f"Не удалось отправить уведомление админу: {e}")
+
+  final_text = (
+      "✅ <b>Оплата звездами успешно получена!</b>\n\n"
+      "Заявка принята в работу. Администратор свяжется с вами в течение"
+      " <b>25 минут</b>."
+  )
+  keyboard = InlineKeyboardMarkup(
+      inline_keyboard=[
+          [InlineKeyboardButton(text="🏠 На главную", callback_data="back_home")]
+      ]
+  )
+
+  await message.answer(final_text, reply_markup=keyboard, parse_mode="HTML")
+  if user_id in PENDING_STARS_ORDERS:
+    del PENDING_STARS_ORDERS[user_id]
+  await state.clear()
 
 
 # === ОБРАБОТКА ОПЛАТЫ ЧЕРЕЗ CRYPTOBOT ===
