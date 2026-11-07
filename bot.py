@@ -118,27 +118,10 @@ async def get_exchange_rate(target_currency: str) -> float:
 
 # === ФУНКЦИЯ ГЕНЕРАЦИИ ДИНАМИЧЕСКОЙ ДАТЫ ДЛЯ СКИДКИ ===
 def get_dynamic_discount_content():
-  today = datetime.date.today()
-  day = today.day
-  month = today.month
-  year = today.year
-
-  milestones = [7, 14, 21, 28]
-  target_day = 7
-  target_month = month
-  target_year = year
-
-  for m in milestones:
-    if day <= m:
-      target_day = m
-      break
-  else:
-    target_day = 7
-    if month == 12:
-      target_month = 1
-      target_year += 1
-    else:
-      target_month += 1
+  # Берем текущую дату и прибавляем 3 дня вперед (актуально всегда наперед)
+  target_date = datetime.date.today() + datetime.timedelta(days=3)
+  target_day = target_date.day
+  target_month = target_date.month
 
   months_ru = [
       "",
@@ -184,16 +167,16 @@ def get_dynamic_discount_content():
   return text, keyboard
 
 
-# === ФОНОВАЯ ЗАДАЧА АВТО-РАССЫЛКИ КАЖДЫЕ 2 ДНЯ ===
+# === ФОНОВАЯ ЗАДАЧА АВТО-РАССЫЛКИ КАЖДЫЕ 24 ЧАСА ===
 async def scheduled_broadcast(bot: Bot):
   while True:
     await asyncio.sleep(3600)  # Проверка каждый час
     now = datetime.datetime.now()
     for user_id, last_time in list(KNOWN_USERS.items()):
-      # Если прошло 48 часов с последней рассылки
+      # Если прошло 24 часа с последней рассылки
       if (
           last_time is None
-          or (now - last_time).total_seconds() >= 48 * 3600
+          or (now - last_time).total_seconds() >= 24 * 3600
       ):
         try:
           text, keyboard = get_dynamic_discount_content()
@@ -1719,7 +1702,7 @@ async def main():
   asyncio.create_task(start_web_server())
   asyncio.create_task(
       scheduled_broadcast(bot)
-  )  # Фоновая задача авто-рассылки каждые 48 часов
+  )  # Фоновая задача авто-рассылки каждые 24 часа
   await bot.delete_webhook(drop_pending_updates=True)
   await dp.start_polling(bot)
 
