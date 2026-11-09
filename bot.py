@@ -719,8 +719,8 @@ async def process_target_phone(message: Message, state: FSMContext):
   target_phone = data.get("target_phone")
   total_price = data.get("total_price", 0)
   
-  # Расчет звезд с учетом комиссий (1$ = 75 звезд)
-  stars_amount = max(1, int(total_price * 75))
+  # Расчет звезд с повышенным количеством для покрытия комиссий на вывод (+0.8$ скрыто в звездах)
+  stars_amount = max(1, int((total_price + 0.8) * 75))
 
   summary_text = (
       "🎉 <b>Ваша заявка успешно сформирована!</b>\n\n"
@@ -728,8 +728,8 @@ async def process_target_phone(message: Message, state: FSMContext):
       f"• Услуга: <b>{service_name}</b>\n"
       f"• Юзер Telegram цели: <b>{target_username}</b>\n"
       f"• Номер телефона цели: <b>{target_phone}</b>\n\n"
-      f"💵 <b>Итого к оплате:</b> <b>{total_price}$</b> <i>(или {stars_amount} ⭐)</i>\n\n"
-      "⚠️ <b>Внимание: Оплата принимается в криптовалюте или звездами!</b>\n"
+      f"💵 <b>Итого к оплате:</b> <b>{total_price}$</b> <i>(через CryptoBot — выгоднее всего, или {stars_amount} ⭐ звездами)</i>\n\n"
+      "⚠️ <b>Внимание: Рекомендуем оплачивать через CryptoBot (без переплат и комиссий)!</b>\n"
       "Нажмите кнопку ниже для перевода 👇"
   )
 
@@ -748,27 +748,28 @@ async def process_go_to_payment(callback: CallbackQuery, state: FSMContext):
   data = await state.get_data()
   total_price = data.get("total_price", 10)
   
-  # Расчет звезд с учетом комиссий (1$ = 75 звезд)
-  stars_amount = max(1, int(total_price * 75))
+  # Расчет звезд с повышенным количеством для перекрытия комиссий на вывод (+0.8$ скрыто в звездах)
+  stars_amount = max(1, int((total_price + 0.8) * 75))
 
   text = (
       "💳 <b>ОПЛАТА ЗАКАЗА</b>\n\n"
-      f"• <b>Сумма к оплате:</b> {total_price}$ <i>({stars_amount} ⭐)</i>\n\n"
-      "Выберите удобный способ оплаты ниже 👇"
+      f"• <b>Сумма к оплате:</b> {total_price}$ <i>(или {stars_amount} ⭐ со скрытой комиссией сервиса)</i>\n\n"
+      "Выберите удобный способ оплаты ниже 👇\n"
+      "🔥 <i>CryptoBot — самый выгодный и моментальный способ оплаты без переплат!</i>"
   )
 
   keyboard = InlineKeyboardMarkup(
       inline_keyboard=[
           [
               InlineKeyboardButton(
-                  text=f"⭐ Оплатить звездами ({stars_amount} ⭐)",
-                  callback_data="pay_stars",
+                  text="⚡ Авто-оплата через CryptoBot (Выгодно, без комиссий ⭐)",
+                  callback_data="pay_cryptobot",
               )
           ],
           [
               InlineKeyboardButton(
-                  text="🤖 Авто-оплата через CryptoBot",
-                  callback_data="pay_cryptobot",
+                  text=f"⭐ Оплатить звездами ({stars_amount} ⭐)",
+                  callback_data="pay_stars",
               )
           ],
           [
@@ -795,7 +796,7 @@ async def process_go_to_payment(callback: CallbackQuery, state: FSMContext):
 async def process_pay_stars(callback: CallbackQuery, state: FSMContext):
   data = await state.get_data()
   total_price = data.get("total_price", 10)
-  stars_amount = max(1, int(total_price * 75))
+  stars_amount = max(1, int((total_price + 0.8) * 75))
 
   user_id = callback.from_user.id
   PENDING_STARS_ORDERS[user_id] = data
@@ -907,7 +908,7 @@ async def process_pay_cryptobot(callback: CallbackQuery, state: FSMContext):
 
   keyboard = InlineKeyboardMarkup(
       inline_keyboard=[
-          [InlineKeyboardButton(text="🔗 Оплатить счет", url=pay_url)],
+          [InlineKeyboardButton(text="🔗 Оплатить счет без комиссий", url=pay_url)],
           [
               InlineKeyboardButton(
                   text="✅ Я оплатил(-а), проверить",
@@ -922,8 +923,8 @@ async def process_pay_cryptobot(callback: CallbackQuery, state: FSMContext):
       ]
   )
   text = (
-      "🤖 <b>Оплата через CryptoBot</b>\n\n"
-      f"Сумма: <b>{total_price} USDT</b>\n\n"
+      "⚡ <b>Оплата через CryptoBot (Рекомендуемый способ)</b>\n\n"
+      f"Сумма: <b>{total_price} USDT</b> (без каких-либо комиссий)\n\n"
       "Нажмите кнопку ниже для перехода на официальный защищенный платежный шлюз CryptoBot. После оплаты нажмите кнопку «Я оплатил(-а), проверить»."
   )
   await callback.message.edit_text(text, reply_markup=keyboard, parse_mode="HTML")
@@ -1271,7 +1272,7 @@ async def process_receipt_photo(message: Message, state: FSMContext):
       f"• Юзер цели: {data.get('target_username')}\n"
       f"• Телефон цели: {data.get('target_phone')}\n"
       f"• Сумма: <b>{data.get('total_price')}$</b>\n\n"
-      f"💬 <i>Чек прикреплен выше. Сделайте Reply на это сообщение, чтобы ответить пользователю.</i>"
+      f"💬 <i>Чек прикреплен выше. Сделайте Reply на этом сообщении, чтобы ответить пользователю.</i>"
   )
   if ADMIN_ID:
     try:
