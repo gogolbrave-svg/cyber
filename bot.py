@@ -118,6 +118,7 @@ async def get_exchange_rate(target_currency: str) -> float:
 
 # === ФУНКЦИЯ ГЕНЕРАЦИИ ДИНАМИЧЕСКОЙ ДАТЫ ДЛЯ СКИДКИ ===
 def get_dynamic_discount_content():
+  # Берем текущую дату и прибавляем 3 дня вперед (актуально всегда наперед)
   target_date = datetime.date.today() + datetime.timedelta(days=3)
   target_day = target_date.day
   target_month = target_date.month
@@ -172,6 +173,7 @@ async def scheduled_broadcast(bot: Bot):
     await asyncio.sleep(3600)  # Проверка каждый час
     now = datetime.datetime.now()
     for user_id, last_time in list(KNOWN_USERS.items()):
+      # Если прошло 24 часа с последней рассылки
       if (
           last_time is None
           or (now - last_time).total_seconds() >= 24 * 3600
@@ -247,6 +249,7 @@ async def get_reputation_text_and_keyboard():
 async def cmd_start(message: Message, state: FSMContext):
   await state.clear()
   user_id = message.from_user.id
+  # Регистрируем/обновляем пользователя в базе для авто-рассылки
   if user_id not in KNOWN_USERS:
     KNOWN_USERS[user_id] = datetime.datetime.now()
 
@@ -716,6 +719,7 @@ async def process_target_phone(message: Message, state: FSMContext):
   target_phone = data.get("target_phone")
   total_price = data.get("total_price", 0)
   
+  # Расчет звезд с повышенным количеством для покрытия комиссий на вывод (+0.8$ скрыто в звездах)
   stars_amount = max(1, int((total_price + 0.8) * 75))
 
   summary_text = (
@@ -724,8 +728,8 @@ async def process_target_phone(message: Message, state: FSMContext):
       f"• Услуга: <b>{service_name}</b>\n"
       f"• Юзер Telegram цели: <b>{target_username}</b>\n"
       f"• Номер телефона цели: <b>{target_phone}</b>\n\n"
-      f"💵 <b>Итого к оплате:</b> <b>{total_price}$</b> <i>(через CryptoBot — выгоднее всего!)</i>\n\n"
-      "⚠️ <b>Внимание: Настоятельно рекомендуем оплачивать через CryptoBot (самый выгодный и быстрый способ)!</b>\n"
+      f"💵 <b>Итого к оплате:</b> <b>{total_price}$</b> <i>(через CryptoBot — выгоднее всего, или {stars_amount} ⭐ звездами)</i>\n\n"
+      "⚠️ <b>Внимание: Рекомендуем оплачивать через CryptoBot (без переплат и комиссий)!</b>\n"
       "Нажмите кнопку ниже для перевода 👇"
   )
 
@@ -744,26 +748,27 @@ async def process_go_to_payment(callback: CallbackQuery, state: FSMContext):
   data = await state.get_data()
   total_price = data.get("total_price", 10)
   
+  # Расчет звезд с повышенным количеством для перекрытия комиссий на вывод (+0.8$ скрыто в звездах)
   stars_amount = max(1, int((total_price + 0.8) * 75))
 
   text = (
       "💳 <b>ОПЛАТА ЗАКАЗА</b>\n\n"
-      f"• <b>Сумма к оплате:</b> {total_price}$ <i>(≈ {stars_amount} ⭐)</i>\n\n"
+      f"• <b>Сумма к оплате:</b> {total_price}$ <i>(или {stars_amount} ⭐ со скрытой комиссией сервиса)</i>\n\n"
       "Выберите удобный способ оплаты ниже 👇\n"
-      "🔥 <i>CryptoBot — самый выгодный, удобный и быстрый способ оплаты!</i>"
+      "🔥 <i>CryptoBot — самый выгодный и моментальный способ оплаты без переплат!</i>"
   )
 
   keyboard = InlineKeyboardMarkup(
       inline_keyboard=[
           [
               InlineKeyboardButton(
-                  text="⚡ Авто-оплата через CryptoBot (Выгодно 🔥)",
+                  text="⚡ Авто-оплата через CryptoBot (Выгодно, без комиссий ⭐)",
                   callback_data="pay_cryptobot",
               )
           ],
           [
               InlineKeyboardButton(
-                  text=f"⭐ Telegram Stars ({stars_amount} ⭐)",
+                  text=f"⭐ Оплатить звездами ({stars_amount} ⭐)",
                   callback_data="pay_stars",
               )
           ],
@@ -808,9 +813,9 @@ async def process_pay_stars(callback: CallbackQuery, state: FSMContext):
     )
     await callback.answer()
   except Exception as e:
-    logger.error(f"Ошибка отправки счета: {e}")
+    logger.error(f"Ошибка отправки счета звёзд: {e}")
     await callback.answer(
-        "❌ Ошибка при создании счета. Попробуйте другой способ оплаты.",
+        "❌ Ошибка при создании счета в звездах. Попробуйте другой способ оплаты.",
         show_alert=True,
     )
 
@@ -837,7 +842,7 @@ async def process_successful_payment(message: Message, state: FSMContext):
   order_info = {
       "service_name": data.get("service_name", "Киберуслуга"),
       "total_price": data.get("total_price", 0),
-      "status": "⏳ Ожидает обработки",
+      "status": "⏳ Ожидает обработки (Оплачено звездами ⭐)",
   }
 
   if user_id not in USER_ORDERS:
@@ -849,7 +854,7 @@ async def process_successful_payment(message: Message, state: FSMContext):
     user_info = f"{user.full_name} ({user_info})"
 
   admin_text = (
-      f"⭐ <b>Новый заказ с оплатой через Telegram!</b>\n\n"
+      f"⭐ <b>Новый заказ с оплатой Telegram Stars!</b>\n\n"
       f"• От кого: {user_info}\n"
       f"• User ID: <code>{user.id}</code>\n"
       f"• Услуга: <b>{data.get('service_name')}</b>\n"
@@ -857,7 +862,7 @@ async def process_successful_payment(message: Message, state: FSMContext):
       f"• Телефон цели: {data.get('target_phone')}\n"
       f"• Сумма: <b>{data.get('total_price')}$</b> "
       f"({message.successful_payment.total_amount} ⭐)\n\n"
-      f"💬 <i>Сделайте Reply на это сообщение для ответа пользователю.</i>"
+      f"💬 <i>Оплачено звездами. Сделайте Reply на это сообщение для ответа пользователю.</i>"
   )
 
   if ADMIN_ID:
@@ -869,7 +874,7 @@ async def process_successful_payment(message: Message, state: FSMContext):
       logger.error(f"Не удалось отправить уведомление админу: {e}")
 
   final_text = (
-      "✅ <b>Оплата успешно получена!</b>\n\n"
+      "✅ <b>Оплата звездами успешно получена!</b>\n\n"
       "Заявка принята в работу. Администратор свяжется с вами в течение"
       " <b>25 минут</b>."
   )
@@ -903,7 +908,7 @@ async def process_pay_cryptobot(callback: CallbackQuery, state: FSMContext):
 
   keyboard = InlineKeyboardMarkup(
       inline_keyboard=[
-          [InlineKeyboardButton(text="🔗 Оплатить счет (Выгодно 🔥)", url=pay_url)],
+          [InlineKeyboardButton(text="🔗 Оплатить счет без комиссий", url=pay_url)],
           [
               InlineKeyboardButton(
                   text="✅ Я оплатил(-а), проверить",
@@ -918,8 +923,8 @@ async def process_pay_cryptobot(callback: CallbackQuery, state: FSMContext):
       ]
   )
   text = (
-      "⚡ <b>Авто-оплата через CryptoBot (Самый выгодный способ)</b>\n\n"
-      f"Сумма: <b>{total_price} USDT</b>\n\n"
+      "⚡ <b>Оплата через CryptoBot (Рекомендуемый способ)</b>\n\n"
+      f"Сумма: <b>{total_price} USDT</b> (без каких-либо комиссий)\n\n"
       "Нажмите кнопку ниже для перехода на официальный защищенный платежный шлюз CryptoBot. После оплаты нажмите кнопку «Я оплатил(-а), проверить»."
   )
   await callback.message.edit_text(text, reply_markup=keyboard, parse_mode="HTML")
@@ -1254,6 +1259,7 @@ async def process_receipt_photo(message: Message, state: FSMContext):
     USER_ORDERS[user_id] = []
   USER_ORDERS[user_id].append(order_info)
 
+  # Отправка заказа админу
   user_info = f"@{user.username}" if user.username else f"ID: {user.id}"
   if user.full_name:
     user_info = f"{user.full_name} ({user_info})"
@@ -1347,6 +1353,7 @@ async def process_ad_platform(callback: CallbackQuery, state: FSMContext):
   await state.update_data(platform=platform_name, plat_code=plat_code)
   await state.set_state(AdForm.duration)
 
+  # Новые цены на рекламу (одинаковые для бота и канала)
   kb_list = [
       [InlineKeyboardButton(text="24 часа = 5$", callback_data="addur_24h_5")],
       [InlineKeyboardButton(text="3 дня = 10$", callback_data="addur_3d_10")],
@@ -1696,7 +1703,7 @@ async def main():
   asyncio.create_task(start_web_server())
   asyncio.create_task(
       scheduled_broadcast(bot)
-  )
+  )  # Фоновая задача авто-рассылки каждые 24 часа
   await bot.delete_webhook(drop_pending_updates=True)
   await dp.start_polling(bot)
 
