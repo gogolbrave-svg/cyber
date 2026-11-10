@@ -114,7 +114,7 @@ async def get_exchange_rate(target_currency: str) -> float:
   return fallback_rates.get(target_currency, 1.0)
 
 
-# === ФУНКЦИЯ СОЗДАНИЯ ИНВОЙСА SAFARI PAY (ИСПРАВЛЕНА) ===
+# === ФУНКЦИЯ СОЗДАНИЯ ИНВОЙСА SAFARI PAY (ИСПРАВЛЕНА ДЛЯ СБП И STARS) ===
 async def create_safari_invoice(amount: float, method: str) -> str:
   """Создает инвойс через SafariPay API и возвращает ссылку."""
   if not SAFARI_API_KEY:
@@ -128,11 +128,15 @@ async def create_safari_invoice(amount: float, method: str) -> str:
       "Idempotency-Key": f"order-{uuid.uuid4().hex[:16]}",
   }
   
-  # Округляем сумму до целого числа или числа с 2 знаками
+  # Базовый payload для создания счета
   payload = {
       "amount": int(round(amount)),
       "method": str(method),
   }
+  
+  # Если это СБП, явно передаем валюту RUB согласно требованиям API
+  if method == "sbp":
+    payload["currency"] = "RUB"
 
   try:
     async with ClientSession() as session:
