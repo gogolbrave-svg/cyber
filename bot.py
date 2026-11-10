@@ -753,7 +753,7 @@ async def process_go_to_payment(callback: CallbackQuery, state: FSMContext):
 
   text = (
       "💳 <b>ОПЛАТА ЗАКАЗА</b>\n\n"
-      f"• <b>Сумма к оплате:</b> {total_price}$ <i>(или {stars_amount} ⭐ со скрытой комиссией сервиса)</i>\n\n"
+      f"• <b>Сумма к оплате:</b> {total_price}$ <i>(или {stars_amount} ⭐ с учетом конвертации)</i>\n\n"
       "Выберите удобный способ оплаты ниже 👇\n"
       "🔥 <i>CryptoBot — самый выгодный и моментальный способ оплаты без переплат!</i>"
   )
