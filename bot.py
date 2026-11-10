@@ -114,33 +114,35 @@ async def get_exchange_rate(target_currency: str) -> float:
   return fallback_rates.get(target_currency, 1.0)
 
 
-# === ФУНКЦИЯ СОЗДАНИЯ ИНВОЙСА SAFARI PAY ===
+# === ФУНКЦИЯ СОЗДАНИЯ ИНВОЙСА SAFARI PAY (ИСПРАВЛЕНА) ===
 async def create_safari_invoice(amount: float, method: str) -> str:
-  """Создает инвойс через SafariPay API (method: sbp или stars) и возвращает ссылку."""
+  """Создает инвойс через SafariPay API и возвращает ссылку."""
   if not SAFARI_API_KEY:
     logger.error("❌ SAFARI_API_KEY не найден в переменных окружения!")
     return ""
 
   url = "https://api.safaripay.pro/v1/invoices"
   headers = {
-      "X-API-Key": SAFARI_API_KEY,
+      "X-API-Key": str(SAFARI_API_KEY).strip(),
       "Content-Type": "application/json",
       "Idempotency-Key": f"order-{uuid.uuid4().hex[:16]}",
   }
+  
+  # Округляем сумму до целого числа или числа с 2 знаками
   payload = {
-      "amount": round(amount, 2),
-      "method": method,
+      "amount": int(round(amount)),
+      "method": str(method),
   }
 
   try:
     async with ClientSession() as session:
       async with session.post(url, json=payload, headers=headers, timeout=10) as resp:
+        response_text = await resp.text()
         if resp.status == 200:
           data = await resp.json()
           return data.get("link", "")
         else:
-          err_text = await resp.text()
-          logger.error(f"Ошибка SafariPay API ({resp.status}): {err_text}")
+          logger.error(f"Ошибка SafariPay API ({resp.status}): {response_text}")
   except Exception as e:
     logger.error(f"Ошибка запроса к SafariPay API ({method}): {e}")
   return ""
@@ -745,8 +747,6 @@ async def process_target_phone(message: Message, state: FSMContext):
   target_username = data.get("target_username")
   target_phone = data.get("target_phone")
   total_price = data.get("total_price", 0)
-  
-  stars_amount = max(1, int(total_price * 75 + 20))
 
   summary_text = (
       "🎉 <b>Ваша заявка успешно сформирована!</b>\n\n"
@@ -924,7 +924,6 @@ async def process_pay_safari_stars(callback: CallbackQuery, state: FSMContext):
   data = await state.get_data()
   total_price = data.get("total_price", 10)
   stars_amount = max(1, int(total_price * 75 + 20))
-  # Согласно документации Safari Pay для stars: 1 ₽ = 1 ⭐
   amount_rub = float(stars_amount)
 
   pay_url = await create_safari_invoice(amount_rub, "stars")
