@@ -719,8 +719,8 @@ async def process_target_phone(message: Message, state: FSMContext):
   target_phone = data.get("target_phone")
   total_price = data.get("total_price", 0)
   
-  # Расчет звезд с повышенным количеством для покрытия комиссий на вывод (+0.8$ скрыто в звездах)
-  stars_amount = max(1, int((total_price + 0.8) * 75))
+  # Расчет звезд: для 5$ ровно 395 звезд (с сохранением стоимости при выводе)
+  stars_amount = max(1, int(total_price * 75 + 20))
 
   summary_text = (
       "🎉 <b>Ваша заявка успешно сформирована!</b>\n\n"
@@ -748,8 +748,8 @@ async def process_go_to_payment(callback: CallbackQuery, state: FSMContext):
   data = await state.get_data()
   total_price = data.get("total_price", 10)
   
-  # Расчет звезд с повышенным количеством для перекрытия комиссий на вывод (+0.8$ скрыто в звездах)
-  stars_amount = max(1, int((total_price + 0.8) * 75))
+  # Расчет звезд: для 5$ ровно 395 звезд (с сохранением стоимости при выводе)
+  stars_amount = max(1, int(total_price * 75 + 20))
 
   text = (
       "💳 <b>ОПЛАТА ЗАКАЗА</b>\n\n"
@@ -796,7 +796,7 @@ async def process_go_to_payment(callback: CallbackQuery, state: FSMContext):
 async def process_pay_stars(callback: CallbackQuery, state: FSMContext):
   data = await state.get_data()
   total_price = data.get("total_price", 10)
-  stars_amount = max(1, int((total_price + 0.8) * 75))
+  stars_amount = max(1, int(total_price * 75 + 20))
 
   user_id = callback.from_user.id
   PENDING_STARS_ORDERS[user_id] = data
