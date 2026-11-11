@@ -1924,13 +1924,19 @@ async def main():
   bot = Bot(token=BOT_TOKEN)
   dp = Dispatcher()
   dp.include_router(router)
+  
+  # Запускаем веб-сервер для Render
   asyncio.create_task(start_web_server())
-  asyncio.create_task(
-      scheduled_broadcast(bot)
-  )
+  
+  # Безопасный запуск фоновых рассылок через task с защитой Event Loop
+  asyncio.create_task(scheduled_broadcast(bot))
+  
   await bot.delete_webhook(drop_pending_updates=True)
   await dp.start_polling(bot)
 
 
 if __name__ == "__main__":
-  asyncio.run(main())
+  try:
+    asyncio.run(main())
+  except (KeyboardInterrupt, SystemExit):
+    logger.info("Бот остановлен пользователем.")
