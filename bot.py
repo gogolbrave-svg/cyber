@@ -863,6 +863,7 @@ async def process_target_phone(message: Message, state: FSMContext):
   await message.answer(summary_text, reply_markup=keyboard, parse_mode="HTML")
 
 
+# === ВЫБОР СПОСОБА ОПЛАТЫ (БЕЗ ГАЙДА И ЛИШНИХ КНОПОК) ===
 @router.callback_query(F.data == "go_to_payment")
 async def process_go_to_payment(callback: CallbackQuery, state: FSMContext):
   user_id = callback.from_user.id
@@ -908,14 +909,8 @@ async def process_go_to_payment(callback: CallbackQuery, state: FSMContext):
             ],
             [
                 InlineKeyboardButton(
-                    text="✅ Я разбираюсь в криптовалюте",
+                    text="✅ Оплатить криптовалютой (Реквизиты)",
                     callback_data="crypto_expert",
-                )
-            ],
-            [
-                InlineKeyboardButton(
-                    text="❓ Не разбираюсь (Гайд по оплате)",
-                    callback_data="crypto_guide",
                 )
             ],
         ]
@@ -1242,49 +1237,6 @@ async def process_cryptobot_check(callback: CallbackQuery, state: FSMContext):
   await state.clear()
 
 
-# === МИНИ-ГАЙД ДЛЯ НОВИЧКОВ ===
-@router.callback_query(F.data == "crypto_guide")
-async def process_crypto_guide(callback: CallbackQuery):
-  text = (
-      "📖 <b>МИНИ-ГАЙД ПО ОПЛАТЕ КРИПТОВАЛЮТОЙ</b>\n\n"
-      "Даже если вы никогда не пользовались криптовалютой, оплатить заказ очень"
-      " просто с любой банковской карты или счета любой страны:\n\n"
-      "1. Перейдите на надежный мониторинг обменников:"
-      " <b>https://exchangesumo.com</b>\n"
-      "2. В левой колонке («Отдаете») выберите вашу валюту и банк (например,"
-      " <i>Сбербанк RUB, Тинькофф, Казкоммерцбанк, Visa/Mastercard UAH</i> и"
-      " т.д.).\n"
-      "3. В правой колонке («Получаете») выберите <b>Tether TRC20, BEP20, TON или Bitcoin (BTC)</b>.\n"
-      "4. В появившемся списке выберите подходящий обменник, у которого"
-      " минимальный лимит подходит под сумму вашего заказа.\n"
-      "5. Нажмите на выбранный обменник, заполните простую форму на их сайте:"
-      " укажите сумму и вставьте реквизиты нашего кошелька (которые мы выдадим"
-      " далее), а также свои данные для списания рублей/гривен/тенге.\n"
-      "6. Совершите перевод по инструкции обменника — и средства поступят к"
-      " нам в виде криптовалюты!\n\n"
-      "Как будете готовы, нажмите кнопку ниже, чтобы получить реквизиты:"
-  )
-
-  keyboard = InlineKeyboardMarkup(
-      inline_keyboard=[
-          [
-              InlineKeyboardButton(
-                  text="🟢 Перейти к выбору способа оплаты",
-                  callback_data="crypto_expert",
-              )
-          ],
-          [
-              InlineKeyboardButton(
-                  text="⬅️ Назад к оплате", callback_data="go_to_payment"
-              )
-          ],
-      ]
-  )
-
-  await callback.message.edit_text(text, reply_markup=keyboard, parse_mode="HTML")
-  await callback.answer()
-
-
 # === ВЫБОР СПОСОБА ОПЛАТЫ (BEP-20 / TON / TRC-20 / BTC) ===
 @router.callback_query(F.data == "crypto_expert")
 async def process_crypto_expert(callback: CallbackQuery, state: FSMContext):
@@ -1337,6 +1289,7 @@ async def process_crypto_expert(callback: CallbackQuery, state: FSMContext):
   await callback.answer()
 
 
+# === ОПЛАТА TRC-20 ===
 @router.callback_query(F.data == "pay_trc20")
 async def process_pay_trc20(callback: CallbackQuery, state: FSMContext):
   data = await state.get_data()
@@ -1377,6 +1330,7 @@ async def process_pay_trc20(callback: CallbackQuery, state: FSMContext):
   await callback.answer()
 
 
+# === ОПЛАТА BEP-20 ===
 @router.callback_query(F.data == "pay_bep20")
 async def process_pay_bep20(callback: CallbackQuery, state: FSMContext):
   data = await state.get_data()
@@ -1417,6 +1371,7 @@ async def process_pay_bep20(callback: CallbackQuery, state: FSMContext):
   await callback.answer()
 
 
+# === ОПЛАТА TON ===
 @router.callback_query(F.data == "pay_ton")
 async def process_pay_ton(callback: CallbackQuery, state: FSMContext):
   data = await state.get_data()
@@ -1457,6 +1412,7 @@ async def process_pay_ton(callback: CallbackQuery, state: FSMContext):
   await callback.answer()
 
 
+# === ОПЛАТА BITCOIN (BTC) ===
 @router.callback_query(F.data == "pay_btc")
 async def process_pay_btc(callback: CallbackQuery, state: FSMContext):
   data = await state.get_data()
@@ -1497,6 +1453,7 @@ async def process_pay_btc(callback: CallbackQuery, state: FSMContext):
   await callback.answer()
 
 
+# === ЗАПРОС ЧЕКА У ПОЛЬЗОВАТЕЛЯ ===
 @router.callback_query(F.data == "ask_for_receipt")
 async def ask_for_receipt(callback: CallbackQuery, state: FSMContext):
   await state.set_state(OrderForm.receipt)
@@ -1509,6 +1466,7 @@ async def ask_for_receipt(callback: CallbackQuery, state: FSMContext):
   await callback.answer()
 
 
+# === ПОЛУЧЕНИЕ ЧЕКА И СОХРАНЕНИЕ ===
 @router.message(OrderForm.receipt, F.photo)
 async def process_receipt_photo(message: Message, state: FSMContext):
   user = message.from_user
