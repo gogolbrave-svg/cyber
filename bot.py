@@ -863,7 +863,7 @@ async def process_target_phone(message: Message, state: FSMContext):
   await message.answer(summary_text, reply_markup=keyboard, parse_mode="HTML")
 
 
-# === ВЫБОР СПОСОБА ОПЛАТЫ (БЕЗ ГАЙДА И ЛИШНИХ КНОПОК) ===
+# === ВЫБОР СПОСОБА ОПЛАТЫ ===
 @router.callback_query(F.data == "go_to_payment")
 async def process_go_to_payment(callback: CallbackQuery, state: FSMContext):
   user_id = callback.from_user.id
@@ -930,7 +930,7 @@ async def process_go_to_payment(callback: CallbackQuery, state: FSMContext):
   await callback.answer()
 
 
-# === ОПЛАТА КАРТОЙ / СБП (МГНОВЕННЫЙ ЗАПРОС + БЫСТРАЯ АНИМАЦИЯ) ===
+# === ОПЛАТА КАРТОЙ / СБП (МГНОВЕННЫЙ ПЕРЕХОД НА SAFARI PAY) ===
 @router.callback_query(F.data == "pay_sbp")
 async def process_pay_sbp(callback: CallbackQuery, state: FSMContext):
   user_id = callback.from_user.id
@@ -947,28 +947,10 @@ async def process_pay_sbp(callback: CallbackQuery, state: FSMContext):
   total_price = data.get("total_price", 10)
   rub_amount = max(100, int(total_price * 90))
 
-  # Запуск запроса к SafariPay в фоне
-  api_task = asyncio.create_task(create_safaripay_invoice(rub_amount, "sbp"))
+  await callback.answer("⏳ Создаем защищенную ссылку...", show_alert=False)
 
-  # Быстрая анимация (5 секунд) с защитой от ошибок Telegram API
-  for current_sec in range(5, 0, -1):
-    anim_text = (
-        "💳 <b>Генерация защищенной ссылки...</b>\n\n"
-        f"Осталось: <b>{current_sec} сек.</b> (Карта / СБП)"
-    )
-    anim_kb = InlineKeyboardMarkup(
-        inline_keyboard=[
-            [InlineKeyboardButton(text=f"⏳ Загрузка шлюза... ({current_sec}с)", callback_data="noop")],
-            [InlineKeyboardButton(text="⬅️ Назад к выбору", callback_data="go_to_payment")]
-        ]
-    )
-    try:
-      await callback.message.edit_text(anim_text, reply_markup=anim_kb, parse_mode="HTML")
-    except Exception:
-      pass
-    await asyncio.sleep(1)
-
-  pay_url = await api_task
+  # Сразу делаем запрос к API SafariPay без всяких искусственных задержек
+  pay_url = await create_safaripay_invoice(rub_amount, "sbp")
 
   if not pay_url:
     fail_kb = InlineKeyboardMarkup(
@@ -979,7 +961,7 @@ async def process_pay_sbp(callback: CallbackQuery, state: FSMContext):
     )
     await callback.message.edit_text(
         "⚠️ <b>Шлюз не ответил вовремя</b>\n\n"
-        "Нажмите кнопку еще раз для повторной генерации ссылки.",
+        "Не удалось получить ссылку на оплату. Попробуйте еще раз.",
         reply_markup=fail_kb,
         parse_mode="HTML"
     )
@@ -987,7 +969,7 @@ async def process_pay_sbp(callback: CallbackQuery, state: FSMContext):
 
   keyboard = InlineKeyboardMarkup(
       inline_keyboard=[
-          [InlineKeyboardButton(text="🔗 Оплатить СБП / Картой", url=pay_url)],
+          [InlineKeyboardButton(text="🔗 Перейти к оплате СБП", url=pay_url)],
           [
               InlineKeyboardButton(
                   text="✅ Я оплатил(-а), проверить",
@@ -1004,18 +986,12 @@ async def process_pay_sbp(callback: CallbackQuery, state: FSMContext):
   text = (
       "💳 <b>Оплата картой / СБП (Safari Pay)</b>\n\n"
       f"Сумма: <b>{rub_amount} ₽</b>\n\n"
-      "Ссылка готова! Нажмите кнопку ниже для перевода."
+      "Ссылка готова! Нажмите кнопку ниже для перехода на платежный шлюз:"
   )
   await callback.message.edit_text(text, reply_markup=keyboard, parse_mode="HTML")
-  await callback.answer()
 
 
-@router.callback_query(F.data == "noop")
-async def process_noop(callback: CallbackQuery):
-  await callback.answer("⏳ Создаем защищенную ссылку...", show_alert=False)
-
-
-# === ОПЛАТА ЗВЁЗДАМИ (МГНОВЕННЫЙ ЗАПРОС + БЫСТРАЯ АНИМАЦИЯ) ===
+# === ОПЛАТА ЗВЁЗДАМИ (МГНОВЕННЫЙ ПЕРЕХОД НА SAFARI PAY) ===
 @router.callback_query(F.data == "pay_safari_stars")
 async def process_pay_safari_stars(callback: CallbackQuery, state: FSMContext):
   user_id = callback.from_user.id
@@ -1032,37 +1008,28 @@ async def process_pay_safari_stars(callback: CallbackQuery, state: FSMContext):
   total_price = data.get("total_price", 10)
   rub_amount = max(1, int(total_price * 90))
 
-  api_task = asyncio.create_task(create_safaripay_invoice(rub_amount, "stars"))
+  await callback.answer("⏳ Создаем защищенную ссылку...", show_alert=False)
 
-  for current_sec in range(5, 0, -1):
-    anim_text = (
-        "⭐ <b>Генерация счета Telegram Stars...</b>\n\n"
-        f"Осталось: <b>{current_sec} сек.</b>"
-    )
-    anim_kb = InlineKeyboardMarkup(
+  pay_url = await create_safaripay_invoice(rub_amount, "stars")
+
+  if not pay_url:
+    fail_kb = InlineKeyboardMarkup(
         inline_keyboard=[
-            [InlineKeyboardButton(text=f"⭐ Загрузка... ({current_sec}с)", callback_data="noop")],
+            [InlineKeyboardButton(text="🔄 Попробовать еще раз", callback_data="pay_safari_stars")],
             [InlineKeyboardButton(text="⬅️ Назад к выбору", callback_data="go_to_payment")]
         ]
     )
-    try:
-      await callback.message.edit_text(anim_text, reply_markup=anim_kb, parse_mode="HTML")
-    except Exception:
-      pass
-    await asyncio.sleep(1)
-
-  pay_url = await api_task
-
-  if not pay_url:
-    await callback.answer(
-        "❌ Ошибка генерации счета Stars через SafariPay.",
-        show_alert=True,
+    await callback.message.edit_text(
+        "⚠️ <b>Шлюз не ответил вовремя</b>\n\n"
+        "Не удалось получить ссылку на оплату Stars. Попробуйте еще раз.",
+        reply_markup=fail_kb,
+        parse_mode="HTML"
     )
     return
 
   keyboard = InlineKeyboardMarkup(
       inline_keyboard=[
-          [InlineKeyboardButton(text="⭐ Оплатить звёздами (Safari Pay)", url=pay_url)],
+          [InlineKeyboardButton(text="🔗 Перейти к оплате звёздами", url=pay_url)],
           [
               InlineKeyboardButton(
                   text="✅ Я оплатил(-а), проверить",
@@ -1079,10 +1046,9 @@ async def process_pay_safari_stars(callback: CallbackQuery, state: FSMContext):
   text = (
       "⭐ <b>Оплата Telegram Звёздами (Safari Pay)</b>\n\n"
       f"Сумма: <b>{rub_amount} ⭐</b>\n\n"
-      "Счет готов! Нажмите кнопку ниже для оплаты."
+      "Счет готов! Нажмите кнопку ниже для перехода на платежный шлюз:"
   )
   await callback.message.edit_text(text, reply_markup=keyboard, parse_mode="HTML")
-  await callback.answer()
 
 
 @router.callback_query(F.data == "safaripay_check_success")
