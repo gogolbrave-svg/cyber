@@ -863,7 +863,7 @@ async def process_target_phone(message: Message, state: FSMContext):
   await message.answer(summary_text, reply_markup=keyboard, parse_mode="HTML")
 
 
-# === ВЫБОР СПОСОБА ОПЛАТЫ (БЕЗ ГАЙДА И ЛИШНИХ КНОПОК) ===
+# === ВЫБОР СПОСОБА ОПЛАТЫ (С ТОЧНЫМИ КРАТКИМИ НАИМЕНОВАНИЯМИ КНОПОК КАК В ПЕРВОМ БОТЕ) ===
 @router.callback_query(F.data == "go_to_payment")
 async def process_go_to_payment(callback: CallbackQuery, state: FSMContext):
   user_id = callback.from_user.id
@@ -883,7 +883,7 @@ async def process_go_to_payment(callback: CallbackQuery, state: FSMContext):
   base_text = (
       "💳 <b>ОПЛАТА ЗАКАЗА</b>\n\n"
       f"• <b>Сумма к оплате:</b> {total_price}$ (~{rub_amount} ₽ / {stars_amount} ⭐)\n\n"
-      "Выберите удобный способ оплаты ниже 👇\n"
+      "⚠️ Выберите удобный способ оплаты ниже 👇\n"
   )
 
   def get_payment_keyboard(timer_active=False, time_left="20:00"):
@@ -891,25 +891,25 @@ async def process_go_to_payment(callback: CallbackQuery, state: FSMContext):
         inline_keyboard=[
             [
                 InlineKeyboardButton(
-                    text=f"💳 Оплатить картой / СБП (~{rub_amount} ₽)",
+                    text=f"💳 Карта / СБП (~{rub_amount} ₽)",
                     callback_data="pay_sbp",
                 )
             ],
             [
                 InlineKeyboardButton(
-                    text=f"⭐ Оплатить через Safari Pay звёздами ({stars_amount} ⭐)",
+                    text=f"⭐ Telegram Stars ({stars_amount} ⭐)",
                     callback_data="pay_safari_stars",
                 )
             ],
             [
                 InlineKeyboardButton(
-                    text="⚡ Авто-оплата через CryptoBot",
+                    text="🤖 CryptoBot",
                     callback_data="pay_cryptobot",
                 )
             ],
             [
                 InlineKeyboardButton(
-                    text="✅ Оплатить криптовалютой (Реквизиты)",
+                    text="🪙 Крипта USDT",
                     callback_data="crypto_expert",
                 )
             ],
@@ -947,10 +947,8 @@ async def process_pay_sbp(callback: CallbackQuery, state: FSMContext):
   total_price = data.get("total_price", 10)
   rub_amount = max(100, int(total_price * 90))
 
-  # Запуск запроса к SafariPay в фоне
   api_task = asyncio.create_task(create_safaripay_invoice(rub_amount, "sbp"))
 
-  # Быстрая анимация (5 секунд) с защитой от ошибок Telegram API
   for current_sec in range(5, 0, -1):
     anim_text = (
         "💳 <b>Генерация защищенной ссылки...</b>\n\n"
@@ -1162,7 +1160,7 @@ async def process_pay_cryptobot(callback: CallbackQuery, state: FSMContext):
 
   keyboard = InlineKeyboardMarkup(
       inline_keyboard=[
-          [InlineKeyboardButton(text="🔗 Оплатить счет без комиссий", url=pay_url)],
+          [InlineKeyboardButton(text="🔗 Оплатить счет без комиссии", url=pay_url)],
           [
               InlineKeyboardButton(
                   text="✅ Я оплатил(-а), проверить",
@@ -1177,8 +1175,8 @@ async def process_pay_cryptobot(callback: CallbackQuery, state: FSMContext):
       ]
   )
   text = (
-      "⚡ <b>Оплата через CryptoBot (Рекомендуемый способ)</b>\n\n"
-      f"Сумма: <b>{total_price} USDT</b> (без каких-либо комиссий)\n\n"
+      "🤖 <b>Оплата через CryptoBot</b>\n\n"
+      f"Сумма: <b>{total_price} USDT</b> (Без комиссий)\n\n"
       "Нажмите кнопку ниже для перехода на официальный защищенный платежный шлюз CryptoBot. После оплаты нажмите кнопку «Я оплатил(-а), проверить»."
   )
   await callback.message.edit_text(text, reply_markup=keyboard, parse_mode="HTML")
@@ -1248,7 +1246,7 @@ async def process_crypto_expert(callback: CallbackQuery, state: FSMContext):
   ABANDONED_CHECKOUTS.pop(user_id, None)
 
   text = (
-      "💳 <b>ВЫБОР СПОСОБА ОПЛАТЫ</b>\n\n"
+      "💳 <b>ВЫБОР СЕТИ USDT / КРИПТОВАЛЮТЫ</b>\n\n"
       "Пожалуйста, выберите криптовалюту или сеть для перевода:"
   )
 
