@@ -801,13 +801,13 @@ async def process_target_phone(message: Message, state: FSMContext):
       inline_keyboard=[
           [
               InlineKeyboardButton(
-                  text="CryptoBot (Легкая автооплата)",
+                  text="🤖 CryptoBot (Легкая автооплата)",
                   callback_data="pay_cryptobot",
               )
           ],
           [
               InlineKeyboardButton(
-                  text="Оплата USDT",
+                  text="🪙 Оплата USDT",
                   callback_data="crypto_expert",
               )
           ],
@@ -842,13 +842,13 @@ async def process_go_to_payment(callback: CallbackQuery, state: FSMContext):
         inline_keyboard=[
             [
                 InlineKeyboardButton(
-                    text="CryptoBot (Легкая автооплата)",
+                    text="🤖 CryptoBot (Легкая автооплата)",
                     callback_data="pay_cryptobot",
                 )
             ],
             [
                 InlineKeyboardButton(
-                    text="Оплата USDT",
+                    text="🪙 Оплата USDT",
                     callback_data="crypto_expert",
                 )
             ],
