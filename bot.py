@@ -1,4 +1,4 @@
-import asyncio 
+import asyncio
 import datetime
 import logging
 import os
@@ -68,6 +68,9 @@ KNOWN_USERS = {}
 # Хранилище активных задач таймеров и дожимов для неоплаченных оплат
 PAYMENT_TIMERS = {}
 ABANDONED_CHECKOUTS = {}
+
+# Двойной кэш префетча для SafariPay (и карта/СБП, и звёзды генерируются параллельно)
+SAFARIPAY_PREFETCH_CACHE = {}
 
 router = Router()
 
@@ -288,19 +291,21 @@ async def create_cryptobot_invoice(amount_usd: float, description: str) -> str:
       "payload": "order_payment",
   }
 
-  try:
-    async with ClientSession() as session:
-      async with session.post(url, json=payload, headers=headers, timeout=5) as resp:
-        if resp.status == 200:
-          data = await resp.json()
-          if data.get("ok"):
-            return data["result"]["pay_url"]
-  except Exception as e:
-    logger.error(f"Ошибка создания CryptoBot инвойса: {e}")
+  for attempt in range(2):
+    try:
+      async with ClientSession() as session:
+        async with session.post(url, json=payload, headers=headers, timeout=10) as resp:
+          if resp.status == 200:
+            data = await resp.json()
+            if data.get("ok"):
+              return data["result"]["pay_url"]
+    except Exception as e:
+      logger.error(f"Попытка {attempt+1} - Ошибка создания CryptoBot инвойса: {e}")
+      await asyncio.sleep(1)
   return ""
 
 
-# === ФУНКЦИЯ СОЗДАНИЯ ИНВОЙСА SAFARIPAY ===
+# === УСИЛЕННАЯ ФУНКЦИЯ SAFARIPAY С АВТОМАТИЧЕСКИМ ПОВТОРОМ (RETRY) ===
 async def create_safaripay_invoice(amount_rub: float, method: str) -> str:
   if not SAFARIPAY_API_KEY:
     return ""
@@ -316,14 +321,24 @@ async def create_safaripay_invoice(amount_rub: float, method: str) -> str:
       "method": method
   }
 
-  try:
-    async with ClientSession() as session:
-      async with session.post(f"{url}?wait=20", json=payload, headers=headers, timeout=10) as resp:
-        if resp.status in (200, 201):
-          data = await resp.json()
-          return data.get("link", "")
-  except Exception as e:
-    logger.error(f"Ошибка создания SafariPay инвойса ({method}): {e}")
+  # Делаем до 3 попыток запроса, если апишник тупит или перегружен
+  for attempt in range(1, 4):
+    try:
+      async with ClientSession() as session:
+        async with session.post(f"{url}?wait=20", json=payload, headers=headers, timeout=15) as resp:
+          if resp.status in (200, 201):
+            data = await resp.json()
+            link = data.get("link", "")
+            if link:
+              return link
+          else:
+            logger.warning(f"SafariPay вернул статус {resp.status} на попытке {attempt}")
+    except Exception as e:
+      logger.error(f"Попытка {attempt}/3 ошибки запроса SafariPay ({method}): {e}")
+    
+    if attempt < 3:
+      await asyncio.sleep(attempt)
+
   return ""
 
 
@@ -702,6 +717,7 @@ async def back_home(callback: CallbackQuery, state: FSMContext):
     PAYMENT_TIMERS[task_key].cancel()
     del PAYMENT_TIMERS[task_key]
   ABANDONED_CHECKOUTS.pop(user_id, None)
+  SAFARIPAY_PREFETCH_CACHE.pop(user_id, None)
 
   await state.clear()
   keyboard = InlineKeyboardMarkup(
@@ -751,6 +767,7 @@ async def process_start_order(callback: CallbackQuery, state: FSMContext):
     PAYMENT_TIMERS[task_key].cancel()
     del PAYMENT_TIMERS[task_key]
   ABANDONED_CHECKOUTS.pop(user_id, None)
+  SAFARIPAY_PREFETCH_CACHE.pop(user_id, None)
 
   await state.set_state(OrderForm.service)
   keyboard = InlineKeyboardMarkup(
@@ -863,7 +880,7 @@ async def process_target_phone(message: Message, state: FSMContext):
   await message.answer(summary_text, reply_markup=keyboard, parse_mode="HTML")
 
 
-# === ВЫБОР СПОСОБА ОПЛАТЫ (С ТОЧНЫМИ КРАТКИМИ НАИМЕНОВАНИЯМИ КНОПОК КАК В ПЕРВОМ БОТЕ) ===
+# === ПЕРЕХОД К ВЫБОРУ ОПЛАТЫ С МОМЕНТАЛЬНЫМ ПАРАЛЛЕЛЬНЫМ ПРЕФЕТЧЕМ (И КАРТА, И ЗВЕЗДЫ) ===
 @router.callback_query(F.data == "go_to_payment")
 async def process_go_to_payment(callback: CallbackQuery, state: FSMContext):
   user_id = callback.from_user.id
@@ -879,6 +896,12 @@ async def process_go_to_payment(callback: CallbackQuery, state: FSMContext):
   
   rub_amount = max(100, int(total_price * 90))
   stars_amount = max(1, rub_amount)
+
+  # 🔥 ЗАПУСК ФОНОВОГО ПРЕФЕТЧА ОБОИХ ИНВОЙСОВ В SAFARIPAY СРАЗУ
+  SAFARIPAY_PREFETCH_CACHE[user_id] = {
+      "sbp": asyncio.create_task(create_safaripay_invoice(rub_amount, "sbp")),
+      "stars": asyncio.create_task(create_safaripay_invoice(rub_amount, "stars"))
+  }
 
   base_text = (
       "💳 <b>ОПЛАТА ЗАКАЗА</b>\n\n"
@@ -930,7 +953,7 @@ async def process_go_to_payment(callback: CallbackQuery, state: FSMContext):
   await callback.answer()
 
 
-# === ОПЛАТА КАРТОЙ / СБП (МГНОВЕННЫЙ ЗАПРОС + БЫСТРАЯ АНИМАЦИЯ) ===
+# === ОПЛАТА КАРТОЙ / СБП (С ЗАЩИТОЙ ОТ ПАДЕНИЙ И БЕЗОПАСНЫМ ФОЛЛБЕКОМ) ===
 @router.callback_query(F.data == "pay_sbp")
 async def process_pay_sbp(callback: CallbackQuery, state: FSMContext):
   user_id = callback.from_user.id
@@ -947,37 +970,35 @@ async def process_pay_sbp(callback: CallbackQuery, state: FSMContext):
   total_price = data.get("total_price", 10)
   rub_amount = max(100, int(total_price * 90))
 
-  api_task = asyncio.create_task(create_safaripay_invoice(rub_amount, "sbp"))
-
-  for current_sec in range(5, 0, -1):
-    anim_text = (
-        "💳 <b>Генерация защищенной ссылки...</b>\n\n"
-        f"Осталось: <b>{current_sec} сек.</b> (Карта / СБП)"
-    )
-    anim_kb = InlineKeyboardMarkup(
-        inline_keyboard=[
-            [InlineKeyboardButton(text=f"⏳ Загрузка шлюза... ({current_sec}с)", callback_data="noop")],
-            [InlineKeyboardButton(text="⬅️ Назад к выбору", callback_data="go_to_payment")]
-        ]
-    )
+  # Пытаемся забрать предзагруженную задачу из кэша
+  user_cache = SAFARIPAY_PREFETCH_CACHE.get(user_id, {})
+  pref_task = user_cache.get("sbp")
+  
+  pay_url = ""
+  if pref_task:
     try:
-      await callback.message.edit_text(anim_text, reply_markup=anim_kb, parse_mode="HTML")
+      pay_url = await pref_task
     except Exception:
       pass
-    await asyncio.sleep(1)
 
-  pay_url = await api_task
+  # Если в кэше не оказалось — делаем синхронную повторную попытку
+  if not pay_url:
+    pay_url = await create_safaripay_invoice(rub_amount, "sbp")
+    
+  SAFARIPAY_PREFETCH_CACHE.pop(user_id, None)
 
+  # БЕЗОПАСНЫЙ ФОЛЛБЕК: если шлюз лег, НИКАКИХ критических ошибок, выводим понятную кнопку повтора.
   if not pay_url:
     fail_kb = InlineKeyboardMarkup(
         inline_keyboard=[
             [InlineKeyboardButton(text="🔄 Попробовать еще раз", callback_data="pay_sbp")],
+            [InlineKeyboardButton(text="💬 Написать в поддержку", callback_data="contact_admin")],
             [InlineKeyboardButton(text="⬅️ Назад к выбору", callback_data="go_to_payment")]
         ]
     )
     await callback.message.edit_text(
-        "⚠️ <b>Шлюз не ответил вовремя</b>\n\n"
-        "Нажмите кнопку еще раз для повторной генерации ссылки.",
+        "⚠️ <b>Временная задержка платежного шлюза</b>\n\n"
+        "Мы уже работаем над устранением. Нажмите «Попробовать еще раз» или обратитесь в поддержку.",
         reply_markup=fail_kb,
         parse_mode="HTML"
     )
@@ -1010,10 +1031,10 @@ async def process_pay_sbp(callback: CallbackQuery, state: FSMContext):
 
 @router.callback_query(F.data == "noop")
 async def process_noop(callback: CallbackQuery):
-  await callback.answer("⏳ Создаем защищенную ссылку...", show_alert=False)
+  await callback.answer("", show_alert=False)
 
 
-# === ОПЛАТА ЗВЁЗДАМИ (МГНОВЕННЫЙ ЗАПРОС + БЫСТРАЯ АНИМАЦИЯ) ===
+# === ОПЛАТА ЗВЁЗДАМИ (С ЗАЩИТОЙ ОТ ПАДЕНИЙ И БЕЗОПАСНЫМ ФОЛЛБЕКОМ) ===
 @router.callback_query(F.data == "pay_safari_stars")
 async def process_pay_safari_stars(callback: CallbackQuery, state: FSMContext):
   user_id = callback.from_user.id
@@ -1030,31 +1051,34 @@ async def process_pay_safari_stars(callback: CallbackQuery, state: FSMContext):
   total_price = data.get("total_price", 10)
   rub_amount = max(1, int(total_price * 90))
 
-  api_task = asyncio.create_task(create_safaripay_invoice(rub_amount, "stars"))
+  user_cache = SAFARIPAY_PREFETCH_CACHE.get(user_id, {})
+  pref_task = user_cache.get("stars")
+  
+  pay_url = ""
+  if pref_task:
+    try:
+      pay_url = await pref_task
+    except Exception:
+      pass
 
-  for current_sec in range(5, 0, -1):
-    anim_text = (
-        "⭐ <b>Генерация счета Telegram Stars...</b>\n\n"
-        f"Осталось: <b>{current_sec} сек.</b>"
-    )
-    anim_kb = InlineKeyboardMarkup(
+  if not pay_url:
+    pay_url = await create_safaripay_invoice(rub_amount, "stars")
+    
+  SAFARIPAY_PREFETCH_CACHE.pop(user_id, None)
+
+  if not pay_url:
+    fail_kb = InlineKeyboardMarkup(
         inline_keyboard=[
-            [InlineKeyboardButton(text=f"⭐ Загрузка... ({current_sec}с)", callback_data="noop")],
+            [InlineKeyboardButton(text="🔄 Попробовать еще раз", callback_data="pay_safari_stars")],
+            [InlineKeyboardButton(text="💬 Написать в поддержку", callback_data="contact_admin")],
             [InlineKeyboardButton(text="⬅️ Назад к выбору", callback_data="go_to_payment")]
         ]
     )
-    try:
-      await callback.message.edit_text(anim_text, reply_markup=anim_kb, parse_mode="HTML")
-    except Exception:
-      pass
-    await asyncio.sleep(1)
-
-  pay_url = await api_task
-
-  if not pay_url:
-    await callback.answer(
-        "❌ Ошибка генерации счета Stars через SafariPay.",
-        show_alert=True,
+    await callback.message.edit_text(
+        "⚠️ <b>Временная задержка шлюза Telegram Stars</b>\n\n"
+        "Пожалуйста, повторите попытку через секунду или выберите другой способ оплаты.",
+        reply_markup=fail_kb,
+        parse_mode="HTML"
     )
     return
 
@@ -1869,7 +1893,6 @@ async def process_ad_receipt(message: Message, state: FSMContext):
           chat_id=ADMIN_ID,
           photo=photo_id,
           caption=admin_ad_text,
-          parse_mode="HTML",
       )
     except Exception as e:
       logger.error(f"Не удалось отправить рекламу админу: {e}")
