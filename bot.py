@@ -930,7 +930,7 @@ async def process_go_to_payment(callback: CallbackQuery, state: FSMContext):
   await callback.answer()
 
 
-# === ОПЛАТА КАРТОЙ / СБП (МГНОВЕННЫЙ ЗАПРОС + АНИМАЦИЯ 5 СЕКУНД) ===
+# === ОПЛАТА КАРТОЙ / СБП (МГНОВЕННЫЙ ЗАПРОС + БЫСТРАЯ АНИМАЦИЯ) ===
 @router.callback_query(F.data == "pay_sbp")
 async def process_pay_sbp(callback: CallbackQuery, state: FSMContext):
   user_id = callback.from_user.id
@@ -947,10 +947,10 @@ async def process_pay_sbp(callback: CallbackQuery, state: FSMContext):
   total_price = data.get("total_price", 10)
   rub_amount = max(100, int(total_price * 90))
 
-  # 1. Запрос улетает СРАЗУ с 0-й секунды в фоне
+  # Запуск запроса к SafariPay в фоне
   api_task = asyncio.create_task(create_safaripay_invoice(rub_amount, "sbp"))
 
-  # 2. Анимация от 5 до 1 секунд
+  # Быстрая анимация (5 секунд) с защитой от ошибок Telegram API
   for current_sec in range(5, 0, -1):
     anim_text = (
         "💳 <b>Генерация защищенной ссылки...</b>\n\n"
@@ -968,7 +968,6 @@ async def process_pay_sbp(callback: CallbackQuery, state: FSMContext):
       pass
     await asyncio.sleep(1)
 
-  # 3. Забираем готовую ссылку
   pay_url = await api_task
 
   if not pay_url:
@@ -1016,7 +1015,7 @@ async def process_noop(callback: CallbackQuery):
   await callback.answer("⏳ Создаем защищенную ссылку...", show_alert=False)
 
 
-# === ОПЛАТА ЗВЁЗДАМИ (МГНОВЕННЫЙ ЗАПРОС + АНИМАЦИЯ 5 СЕКУНД) ===
+# === ОПЛАТА ЗВЁЗДАМИ (МГНОВЕННЫЙ ЗАПРОС + БЫСТРАЯ АНИМАЦИЯ) ===
 @router.callback_query(F.data == "pay_safari_stars")
 async def process_pay_safari_stars(callback: CallbackQuery, state: FSMContext):
   user_id = callback.from_user.id
@@ -1033,10 +1032,8 @@ async def process_pay_safari_stars(callback: CallbackQuery, state: FSMContext):
   total_price = data.get("total_price", 10)
   rub_amount = max(1, int(total_price * 90))
 
-  # 1. Запрос улетает сразу с 0-й секунды в фоне
   api_task = asyncio.create_task(create_safaripay_invoice(rub_amount, "stars"))
 
-  # 2. Анимация от 5 до 1 секунд
   for current_sec in range(5, 0, -1):
     anim_text = (
         "⭐ <b>Генерация счета Telegram Stars...</b>\n\n"
@@ -1925,10 +1922,7 @@ async def main():
   dp = Dispatcher()
   dp.include_router(router)
   
-  # Запускаем веб-сервер для Render
   asyncio.create_task(start_web_server())
-  
-  # Безопасный запуск фоновых рассылок через task с защитой Event Loop
   asyncio.create_task(scheduled_broadcast(bot))
   
   await bot.delete_webhook(drop_pending_updates=True)
