@@ -311,10 +311,10 @@ async def create_safaripay_invoice(amount_rub: float, method: str) -> str:
       "method": method
   }
 
-  for attempt in range(1, 4):
+  for attempt in range(1, 5):
     try:
       async with ClientSession() as session:
-        async with session.post(f"{url}?wait=20", json=payload, headers=headers, timeout=15) as resp:
+        async with session.post(f"{url}?wait=20", json=payload, headers=headers, timeout=12) as resp:
           if resp.status in (200, 201):
             data = await resp.json()
             link = data.get("link", "")
@@ -323,10 +323,10 @@ async def create_safaripay_invoice(amount_rub: float, method: str) -> str:
           else:
             logger.warning(f"SafariPay вернул статус {resp.status} на попытке {attempt}")
     except Exception as e:
-      logger.error(f"Попытка {attempt}/3 ошибки запроса SafariPay ({method}): {e}")
+      logger.error(f"Попытка {attempt}/4 ошибки запроса SafariPay ({method}): {e}")
     
-    if attempt < 3:
-      await asyncio.sleep(attempt)
+    if attempt < 4:
+      await asyncio.sleep(0.5 * attempt)
 
   return ""
 
@@ -929,7 +929,7 @@ async def process_go_to_payment(callback: CallbackQuery, state: FSMContext):
   await callback.answer()
 
 
-# === ОПЛАТА КАРТОЙ / СБП (С ЗАЩИТОЙ ОТ ПАДЕНИЙ И БЕЗОПАСНЫМ ФОЛЛБЕКОМ) ===
+# === ОПЛАТА КАРТОЙ / СБП (С УМНЫМ ОЖИДАНИЕМ И ЗАЩИТОЙ) ===
 @router.callback_query(F.data == "pay_sbp")
 async def process_pay_sbp(callback: CallbackQuery, state: FSMContext):
   user_id = callback.from_user.id
@@ -942,6 +942,9 @@ async def process_pay_sbp(callback: CallbackQuery, state: FSMContext):
     del PAYMENT_TIMERS[task_key]
   ABANDONED_CHECKOUTS.pop(user_id, None)
 
+  # Быстрый визуальный отклик интерфейсу
+  await callback.answer("⏳ Создаем платежную ссылку...", show_alert=False)
+
   data = await state.get_data()
   total_price = data.get("total_price", 10)
   rub_amount = max(100, int(total_price * 90))
@@ -952,7 +955,7 @@ async def process_pay_sbp(callback: CallbackQuery, state: FSMContext):
   pay_url = ""
   if pref_task:
     try:
-      pay_url = await pref_task
+      pay_url = await asyncio.wait_for(asyncio.shield(pref_task), timeout=5.0)
     except Exception:
       pass
 
@@ -999,7 +1002,6 @@ async def process_pay_sbp(callback: CallbackQuery, state: FSMContext):
       "Ссылка готова! Нажмите кнопку ниже для перевода."
   )
   await callback.message.edit_text(text, reply_markup=keyboard, parse_mode="HTML")
-  await callback.answer()
 
 
 @router.callback_query(F.data == "noop")
@@ -1007,7 +1009,7 @@ async def process_noop(callback: CallbackQuery):
   await callback.answer("", show_alert=False)
 
 
-# === ОПЛАТА ЗВЁЗДАМИ (С ЗАЩИТОЙ ОТ ПАДЕНИЙ И БЕЗОПАСНЫМ ФОЛЛБЕКОМ) ===
+# === ОПЛАТА ЗВЁЗДАМИ (С УМНЫМ ОЖИДАНИЕМ И ЗАЩИТОЙ) ===
 @router.callback_query(F.data == "pay_safari_stars")
 async def process_pay_safari_stars(callback: CallbackQuery, state: FSMContext):
   user_id = callback.from_user.id
@@ -1020,6 +1022,8 @@ async def process_pay_safari_stars(callback: CallbackQuery, state: FSMContext):
     del PAYMENT_TIMERS[task_key]
   ABANDONED_CHECKOUTS.pop(user_id, None)
 
+  await callback.answer("⏳ Создаем счет в Telegram Stars...", show_alert=False)
+
   data = await state.get_data()
   total_price = data.get("total_price", 10)
   rub_amount = max(1, int(total_price * 90))
@@ -1030,7 +1034,7 @@ async def process_pay_safari_stars(callback: CallbackQuery, state: FSMContext):
   pay_url = ""
   if pref_task:
     try:
-      pay_url = await pref_task
+      pay_url = await asyncio.wait_for(asyncio.shield(pref_task), timeout=5.0)
     except Exception:
       pass
 
@@ -1077,7 +1081,6 @@ async def process_pay_safari_stars(callback: CallbackQuery, state: FSMContext):
       "Счет готов! Нажмите кнопку ниже для оплаты."
   )
   await callback.message.edit_text(text, reply_markup=keyboard, parse_mode="HTML")
-  await callback.answer()
 
 
 @router.callback_query(F.data == "safaripay_check_success")
