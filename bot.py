@@ -54,6 +54,22 @@ ABANDONED_CHECKOUTS = {}
 router = Router()
 
 
+# === СЛОВАРЬ ВАЛЮТ ДЛЯ СТРАН (ДЛЯ ОЦЕНОК) ===
+COUNTRY_CURRENCIES = {
+    "Украина": {"code": "UAH", "symbol": "грн."},
+    "Россия": {"code": "RUB", "symbol": "руб."},
+    "Беларусь": {"code": "BYN", "symbol": "byn"},
+    "Казахстан": {"code": "KZT", "symbol": "тңг."},
+    "Молдова": {"code": "MDL", "symbol": "лей"},
+    "Узбекистан": {"code": "UZS", "symbol": "сум"},
+    "Кыргызстан": {"code": "KGS", "symbol": "сом"},
+    "Таджикистан": {"code": "TJS", "symbol": "сом."},
+    "Грузия": {"code": "GEL", "symbol": "lari"},
+    "Армения": {"code": "AMD", "symbol": "драм"},
+    "Азербайджан": {"code": "AZN", "symbol": "манат"},
+}
+
+
 # === ФУНКЦИЯ ПОЛУЧЕНИЯ РЕАЛЬНЫХ КУРСОВ ВАЛЮТ ===
 async def get_exchange_rate(target_currency: str) -> float:
   """Получает актуальный курс USD к целевой валюте из публичных API."""
@@ -785,13 +801,13 @@ async def process_target_phone(message: Message, state: FSMContext):
       inline_keyboard=[
           [
               InlineKeyboardButton(
-                  text="🤖 CryptoBot (Самый легкий и удобный)",
+                  text="CryptoBot (Легкая автооплата)",
                   callback_data="pay_cryptobot",
               )
           ],
           [
               InlineKeyboardButton(
-                  text="🪙 Прямая оплата USDT (Реквизиты)",
+                  text="Оплата USDT",
                   callback_data="crypto_expert",
               )
           ],
@@ -826,13 +842,13 @@ async def process_go_to_payment(callback: CallbackQuery, state: FSMContext):
         inline_keyboard=[
             [
                 InlineKeyboardButton(
-                    text="🤖 CryptoBot (Рекомендуемый / Быстрый)",
+                    text="CryptoBot (Легкая автооплата)",
                     callback_data="pay_cryptobot",
                 )
             ],
             [
                 InlineKeyboardButton(
-                    text="🪙 Крипта USDT (Реквизиты)",
+                    text="Оплата USDT",
                     callback_data="crypto_expert",
                 )
             ],
