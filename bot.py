@@ -846,6 +846,12 @@ async def process_go_to_payment(callback: CallbackQuery, state: FSMContext):
                     text="📖 Как купить крипту (Минигайд)",
                     callback_data="cryptobot_guide",
                 )
+            ],
+            [
+                InlineKeyboardButton(
+                    text="💬 Не знаю как оплатить / Связаться",
+                    callback_data="payment_help_manager",
+                )
             ]
         ]
     )
@@ -862,6 +868,34 @@ async def process_go_to_payment(callback: CallbackQuery, state: FSMContext):
   )
   
   await callback.answer()
+
+
+@router.callback_query(F.data == "payment_help_manager")
+async def process_payment_help_manager(callback: CallbackQuery):
+  user = callback.from_user
+  user_info = f"@{user.username}" if user.username else f"ID: {user.id}"
+  if user.full_name:
+    user_info = f"{user.full_name} ({user_info})"
+
+  admin_text = (
+      f"🚨 <b>Проблема с оплатой / Запрос помощи!</b>\n\n"
+      f"• От кого: {user_info}\n"
+      f"• User ID: <code>{user.id}</code>\n"
+      f"• Ситуация: Клиент на этапе выбора оплаты нажал кнопку «Не знаю как оплатить / Связаться» (нужна помощь с переводом)."
+  )
+
+  if ADMIN_ID:
+    try:
+      await callback.bot.send_message(
+          chat_id=ADMIN_ID, text=admin_text, parse_mode="HTML"
+      )
+    except Exception as e:
+      logger.error(f"Не удалось отправить уведомление о проблеме с оплатой админу: {e}")
+
+  await callback.answer(
+      "✅ Менеджер уведомлен! В ближайшее время он свяжется с вами и поможет.",
+      show_alert=True,
+  )
 
 
 # === МИНИГАЙД ПО ПОКУПКЕ КРИПТЫ ЧЕРЕЗ P2P ===
