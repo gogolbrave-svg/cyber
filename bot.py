@@ -115,6 +115,30 @@ ABANDONED_CHECKOUTS = {}
 
 router = Router()
 
+# === КРИПТОСЕТИ И РЕКВИЗИТЫ (В СТИЛЕ ПЕРВОГО БОТА) ===
+CRYPTO_NETWORKS = {
+    "trc20": {
+        "name": "USDT (TRC-20)",
+        "address": "TYd1ekJgTHnFfgAVYXsi7689GaG5oZN3Xe",
+        "network": "TRC-20",
+    },
+    "bep20": {
+        "name": "USDT (BEP-20)",
+        "address": "0x0A6C6634f8FD920a5E9E0d241CD46d6C15377f39",
+        "network": "BEP-20",
+    },
+    "ton": {
+        "name": "TON",
+        "address": "UQDwk7PZoWr0zHv-BItBEGxnq4uyj81z6BlIw74heDgF-Shd",
+        "network": "TON",
+    },
+    "btc": {
+        "name": "Bitcoin (BTC)",
+        "address": "bc1qj7xy0645vcza7l3et5s8nuahllua9a439c0795",
+        "network": "Bitcoin",
+    },
+}
+
 
 # === АВТОРАССЫЛКА СКИДКИ ===
 def get_dynamic_discount_content():
@@ -267,10 +291,10 @@ def get_back_home_keyboard():
   return InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text="🏠 На главную", callback_data="back_home")]])
 
 
-# === CRYPTOBOT ИНВОЙСЫ ===
-async def create_cryptobot_invoice(amount_usd: float, description: str) -> str:
+# === CRYPTOBOT ИНВОЙСЫ И ПРОВЕРКА (В СТИЛЕ ПЕРВОГО БОТА) ===
+async def create_cryptobot_invoice(amount_usd: float, description: str):
   if not CRYPTO_BOT_TOKEN:
-    return ""
+    return "", None
 
   url = "https://pay.crypt.bot/api/createInvoice"
   headers = {"Crypto-Pay-API-Token": CRYPTO_BOT_TOKEN}
@@ -288,11 +312,32 @@ async def create_cryptobot_invoice(amount_usd: float, description: str) -> str:
           if resp.status == 200:
             data = await resp.json()
             if data.get("ok"):
-              return data["result"]["pay_url"]
+              res = data["result"]
+              return res["pay_url"], res["invoice_id"]
     except Exception as e:
       logger.error(f"Попытка {attempt+1} - Ошибка создания CryptoBot инвойса: {e}")
       await asyncio.sleep(1)
-  return ""
+  return "", None
+
+
+async def check_cryptobot_invoice_status(invoice_id: int) -> bool:
+  if not CRYPTO_BOT_TOKEN or not invoice_id:
+    return True
+  url = "https://pay.crypt.bot/api/getInvoices"
+  headers = {"Crypto-Pay-API-Token": CRYPTO_BOT_TOKEN}
+  params = {"invoice_ids": str(invoice_id)}
+  try:
+    async with ClientSession() as session:
+      async with session.get(url, params=params, headers=headers, timeout=10) as resp:
+        if resp.status == 200:
+          data = await resp.json()
+          if data.get("ok"):
+            items = data.get("result", {}).get("items", [])
+            if items:
+              return items[0].get("status") == "paid"
+  except Exception as e:
+    logger.error(f"Ошибка проверки инвойса CryptoBot: {e}")
+  return False
 
 
 def get_order_details_text(data):
@@ -545,7 +590,7 @@ async def process_target_phone(message: Message, state: FSMContext):
   await message.answer(summary_text, reply_markup=keyboard, parse_mode="HTML")
 
 
-# === ОПЛАТА И ШЛЮЗЫ ===
+# === ОПЛАТА И ШЛЮЗЫ (В СТИЛЕ ПЕРВОГО БОТА, БЕЗ КНОПКИ ГАЙДА) ===
 @router.callback_query(F.data == "go_to_payment")
 async def process_go_to_payment(callback: CallbackQuery, state: FSMContext):
   user_id = callback.from_user.id
@@ -559,19 +604,14 @@ async def process_go_to_payment(callback: CallbackQuery, state: FSMContext):
   data = await state.get_data()
   total_price = data.get("total_price", 10)
 
-  base_text = (
-      "💳 <b>Способ оплаты</b>\n\n"
-      f"• Сумма к зачислению: <b>{total_price}$ USDT</b>\n\n"
-      "Выберите наиболее удобный вариант из списка ниже:\n"
-  )
+  base_text = f"💳 <b>Способ оплаты</b>\n\nСумма: <b>{total_price}$</b>\n\nВыберите вариант:"
 
   def get_payment_keyboard():
     return InlineKeyboardMarkup(
         inline_keyboard=[
-            [InlineKeyboardButton(text="🤖 CryptoBot (мгновенно и без комиссий)", callback_data="pay_cryptobot")],
-            [InlineKeyboardButton(text="🪙 Криптовалюта (выбор сети / реквизиты)", callback_data="crypto_expert")],
-            [InlineKeyboardButton(text="📖 Как приобрести криптовалюту (Минигайд)", callback_data="cryptobot_guide")],
-            [InlineKeyboardButton(text="💬 Нужна помощь с оплатой", callback_data="payment_help_manager")],
+            [InlineKeyboardButton(text="🤖 CryptoBot (без комиссий)", callback_data="pay_cryptobot")],
+            [InlineKeyboardButton(text="🪙 Криптовалюта (выбор сети)", callback_data="crypto_expert")],
+            [InlineKeyboardButton(text="💬 Нужна помощь", callback_data="payment_help_manager")],
         ]
     )
 
@@ -590,47 +630,14 @@ async def process_go_to_payment(callback: CallbackQuery, state: FSMContext):
 
 @router.callback_query(F.data == "payment_help_manager")
 async def process_payment_help_manager(callback: CallbackQuery):
-  user = callback.from_user
-  user_info = f"@{user.username}" if user.username else f"ID: {user.id}"
-  if user.full_name:
-    user_info = f"{user.full_name} ({user_info})"
-
-  admin_text = (
-      f"🚨 <b>Запрос помощи с оплатой</b>\n\n"
-      f"• От кого: {user_info}\n"
-      f"• User ID: <code>{user.id}</code>\n"
-      f"• Ситуация: Клиенту требуется консультация по проведению платежа."
-  )
   if ADMIN_ID:
     try:
-      await callback.bot.send_message(chat_id=ADMIN_ID, text=admin_text, parse_mode="HTML")
-    except Exception as e:
-      logger.error(f"Не удалось отправить уведомление о проблеме с оплатой админу: {e}")
-
-  await callback.answer("✅ Менеджер уведомлен. Скоро он свяжется с вами для помощи.", show_alert=True)
-
-
-@router.callback_query(F.data == "cryptobot_guide")
-async def process_cryptobot_guide(callback: CallbackQuery):
-  chat_id = callback.message.chat.id
-  message_id = callback.message.message_id
-  task_key = (chat_id, message_id)
-  if task_key in PAYMENT_TIMERS:
-    PAYMENT_TIMERS[task_key].cancel()
-    del PAYMENT_TIMERS[task_key]
-
-  guide_text = (
-      "📖 <b>Минигайд: как оплатить через CryptoBot</b>\n\n"
-      "Если у вас нет готовой криптовалюты, вы можете легко приобрести её с банковской карты за пару минут:\n\n"
-      "1. Откройте официальный бот <b>@CryptoBot</b>.\n"
-      "2. Перейдите в раздел <b>«Кошелек» ➔ «P2P»</b>.\n"
-      "3. Выберите покупку USDT за вашу валюту.\n"
-      "4. После завершения сделки USDT поступят на ваш баланс.\n"
-      "5. Вернитесь сюда, нажмите <b>CryptoBot</b> и подтвердите платеж без комиссий."
-  )
-  keyboard = InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text="⬅️ Назад к оплате", callback_data="go_to_payment")]])
-  await callback.message.edit_text(guide_text, reply_markup=keyboard, parse_mode="HTML")
-  await callback.answer()
+      user = callback.from_user
+      user_info = f"@{user.username}" if user.username else f"ID: {user.id}"
+      await callback.bot.send_message(chat_id=ADMIN_ID, text=f"🚨 Запрос помощи с оплатой от {user_info} (<code>{user.id}</code>)", parse_mode="HTML")
+    except Exception:
+      pass
+  await callback.answer("✅ Менеджер уведомлен, скоро свяжется с вами.", show_alert=True)
 
 
 @router.callback_query(F.data == "pay_cryptobot")
@@ -648,67 +655,66 @@ async def process_pay_cryptobot(callback: CallbackQuery, state: FSMContext):
   data = await state.get_data()
   total_price = data.get("total_price", 10)
 
-  pay_url = await create_cryptobot_invoice(total_price, "Оплата киберуслуг")
+  pay_url, inv_id = await create_cryptobot_invoice(total_price, "Оплата услуг")
   if not pay_url:
-    await callback.answer("❌ Сервис временно недоступен. Обратитесь в поддержку.", show_alert=True)
+    await callback.answer("❌ Сервис недоступен.", show_alert=True)
     return
 
+  await state.update_data(invoice_id=inv_id)
   keyboard = InlineKeyboardMarkup(
       inline_keyboard=[
-          [InlineKeyboardButton(text="🔗 Оплатить счет (без комиссии)", url=pay_url)],
-          [InlineKeyboardButton(text="✅ Я оплатил(-а), проверить", callback_data="cryptobot_check_success")],
+          [InlineKeyboardButton(text="🔗 Оплатить счет", url=pay_url)],
+          [InlineKeyboardButton(text="✅ Проверить оплату", callback_data="cryptobot_check_success")],
           [InlineKeyboardButton(text="⬅️ Назад", callback_data="go_to_payment")],
       ]
   )
-  text = (
-      "🤖 <b>Оплата через CryptoBot</b>\n\n"
-      f"Сумма к оплате: <b>{total_price} USDT</b>\n\n"
-      "Нажмите кнопку перевода для совершения платежа через защищенный шлюз, после чего нажмите кнопку проверки ниже."
-  )
-  await callback.message.edit_text(text, reply_markup=keyboard, parse_mode="HTML")
+  await callback.message.edit_text(f"🤖 <b>CryptoBot</b>\n\nСумма: <b>{total_price} USDT</b>\n\nПосле оплаты нажмите кнопку проверки:", reply_markup=keyboard, parse_mode="HTML")
   await callback.answer()
 
 
 @router.callback_query(F.data == "cryptobot_check_success")
 async def process_cryptobot_check(callback: CallbackQuery, state: FSMContext):
-  user = callback.from_user
   data = await state.get_data()
+  inv_id = data.get("invoice_id")
+  
+  is_paid = await check_cryptobot_invoice_status(inv_id)
+  if not is_paid:
+    await callback.answer("⏳ Платеж еще не поступил. Попробуйте через минуту.", show_alert=True)
+    return
+
+  user = callback.from_user
+  ABANDONED_CHECKOUTS.pop(user.id, None)
 
   service_name = data.get("service_name", "Услуга")
   total_price = data.get("total_price", 10)
   target_info = f"Юзер: {data.get('target_username')}, Тел: {data.get('target_phone')}"
 
-  add_order_to_db(user.id, service_name, total_price, "⏳ Платёж проверяется (CryptoBot)", target_info)
+  add_order_to_db(user.id, service_name, total_price, "✅ Оплачено через CryptoBot", target_info)
 
   user_info = f"@{user.username}" if user.username else f"ID: {user.id}"
   if user.full_name:
     user_info = f"{user.full_name} ({user_info})"
 
-  admin_order_text = (
-      f"🤖 <b>Новый платеж через CryptoBot</b>\n\n"
-      f"• От кого: {user_info}\n"
-      f"• User ID: <code>{user.id}</code>\n"
-      f"• Услуга: <b>{service_name}</b>\n"
-      f"{get_admin_order_details_text(data)}"
-      f"• Сумма: <b>{total_price}$</b>\n\n"
-      f"💬 <i>Оплачено через CryptoBot. Сделайте Reply для ответа.</i>"
-  )
   if ADMIN_ID:
     try:
+      admin_order_text = (
+          f"🤖 <b>Успешная оплата CryptoBot</b>\n\n"
+          f"• От кого: {user_info}\n"
+          f"• User ID: <code>{user.id}</code>\n"
+          f"• Услуга: <b>{service_name}</b>\n"
+          f"{get_admin_order_details_text(data)}"
+          f"• Сумма: <b>{total_price}$</b>"
+      )
       await callback.bot.send_message(chat_id=ADMIN_ID, text=admin_order_text, parse_mode="HTML")
     except Exception as e:
-      logger.error(f"Не удалось отправить уведомление админу: {e}")
+      logger.error(f"Ошибка отправки админу: {e}")
 
-  final_text = (
-      "⏳ <b>Платёж проверяется</b>\n\n"
-      "Система проверяет зачисление средств. Модератор подтвердит заявку в течение <b>25 минут</b>."
-  )
-  await callback.message.edit_text(final_text, reply_markup=get_back_home_keyboard(), parse_mode="HTML")
+  await callback.message.edit_text("✅ <b>Оплата подтверждена!</b>\n\nЗаявка принята в работу.", reply_markup=get_back_home_keyboard(), parse_mode="HTML")
   await state.clear()
 
 
 @router.callback_query(F.data == "crypto_expert")
-async def process_crypto_expert(callback: CallbackQuery):
+async def process_crypto_expert(callback: CallbackQuery, state: FSMContext):
   user_id = callback.from_user.id
   chat_id = callback.message.chat.id
   message_id = callback.message.message_id
@@ -719,47 +725,42 @@ async def process_crypto_expert(callback: CallbackQuery):
     del PAYMENT_TIMERS[task_key]
   ABANDONED_CHECKOUTS.pop(user_id, None)
 
-  text = "🪙 <b>Выбор сети / криптовалюты</b>\n\nВыберите подходящую сеть для перевода средств:"
   keyboard = InlineKeyboardMarkup(
       inline_keyboard=[
-          [InlineKeyboardButton(text="🔴 USDT (TRC-20)", callback_data="pay_trc20")],
-          [InlineKeyboardButton(text="🟢 USDT (BEP-20)", callback_data="pay_bep20")],
-          [InlineKeyboardButton(text="🔵 TON", callback_data="pay_ton")],
-          [InlineKeyboardButton(text="🟠 Bitcoin (BTC)", callback_data="pay_btc")],
+          [InlineKeyboardButton(text="🔴 USDT (TRC-20)", callback_data="pay_crypto_trc20")],
+          [InlineKeyboardButton(text="🟢 USDT (BEP-20)", callback_data="pay_crypto_bep20")],
+          [InlineKeyboardButton(text="🔵 TON", callback_data="pay_crypto_ton")],
+          [InlineKeyboardButton(text="🟠 Bitcoin (BTC)", callback_data="pay_crypto_btc")],
           [InlineKeyboardButton(text="⬅️ Назад", callback_data="go_to_payment")],
       ]
   )
-  await callback.message.edit_text(text, reply_markup=keyboard, parse_mode="HTML")
+  await callback.message.edit_text("🪙 Выберите криптовалютную сеть:", reply_markup=keyboard, parse_mode="HTML")
   await callback.answer()
 
 
-@router.callback_query(F.data.in_(["pay_trc20", "pay_bep20", "pay_ton", "pay_btc"]))
-async def process_crypto_wallet(callback: CallbackQuery, state: FSMContext):
+@router.callback_query(F.data.startswith("pay_crypto_"))
+async def process_pay_crypto(callback: CallbackQuery, state: FSMContext):
+  net_key = callback.data.split("_")[2]
+  net_info = CRYPTO_NETWORKS.get(net_key)
+  if not net_info:
+    await callback.answer("Сеть не найдена", show_alert=True)
+    return
+
   data = await state.get_data()
   total_price = data.get("total_price", 10)
 
-  wallets = {
-      "pay_trc20": ("USDT (TRC-20)", "TYd1ekJgTHnFfgAVYXsi7689GaG5oZN3Xe"),
-      "pay_bep20": ("USDT (BEP-20)", "0x0A6C6634f8FD920a5E9E0d241CD46d6C15377f39"),
-      "pay_ton": ("TON", "UQDwk7PZoWr0zHv-BItBEGxnq4uyj81z6BlIw74heDgF-Shd"),
-      "pay_btc": ("Bitcoin (BTC)", "bc1qj7xy0645vcza7l3et5s8nuahllua9a439c0795"),
-  }
-
-  net_name, address = wallets.get(callback.data)
-
-  payment_text = (
-      f"💳 <b>Оплата {net_name}</b>\n\n"
+  text = (
+      f"💳 <b>Оплата {net_info['name']}</b>\n\n"
       f"• Сумма: <b>{total_price}$</b>\n"
-      f"• Реквизиты:\n<code>{address}</code>\n\n"
-      "💡 <i>Переведите точную сумму. После перевода нажмите кнопку ниже.</i>"
+      f"• Сеть: <b>{net_info['network']}</b>\n"
+      f"• Реквизиты:\n<code>{net_info['address']}</code>\n\n"
+      "💡 <i>После перевода прикрепите чек.</i>"
   )
-  keyboard = InlineKeyboardMarkup(
-      inline_keyboard=[
-          [InlineKeyboardButton(text="✅ Я оплатил(-а), прикрепить чек", callback_data="ask_for_receipt")],
-          [InlineKeyboardButton(text="⬅️ Назад", callback_data="crypto_expert")],
-      ]
-  )
-  await callback.message.edit_text(payment_text, reply_markup=keyboard, parse_mode="HTML")
+  keyboard = InlineKeyboardMarkup(inline_keyboard=[
+      [InlineKeyboardButton(text="✅ Прикрепить чек", callback_data="ask_for_receipt")],
+      [InlineKeyboardButton(text="⬅️ Назад", callback_data="crypto_expert")]
+  ])
+  await callback.message.edit_text(text, reply_markup=keyboard, parse_mode="HTML")
   await callback.answer()
 
 
@@ -774,13 +775,14 @@ async def ask_for_receipt(callback: CallbackQuery, state: FSMContext):
 @router.message(OrderForm.receipt, F.photo)
 async def process_receipt_photo(message: Message, state: FSMContext):
   user = message.from_user
+  ABANDONED_CHECKOUTS.pop(user.id, None)
   data = await state.get_data()
 
   service_name = data.get("service_name", "Услуга")
   total_price = data.get("total_price", 10)
   target_info = f"Юзер: {data.get('target_username')}, Тел: {data.get('target_phone')}"
 
-  add_order_to_db(user.id, service_name, total_price, "⏳ Платёж проверяется", target_info)
+  add_order_to_db(user.id, service_name, total_price, "⏳ Ожидает проверки чека", target_info)
 
   user_info = f"@{user.username}" if user.username else f"ID: {user.id}"
   if user.full_name:
