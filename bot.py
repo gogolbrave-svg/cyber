@@ -99,6 +99,7 @@ def get_user_orders_from_db(user_id: int):
 
 class OrderForm(StatesGroup):
   service = State()
+  target_count = State()
   target_username = State()
   receipt = State()
 
@@ -342,11 +343,14 @@ async def check_cryptobot_invoice_status(invoice_id: int) -> bool:
 def get_order_details_text(data):
   service_name = data.get("service_name")
   target_username = data.get("target_username")
+  target_count = data.get("target_count", 1)
 
+  details = f"• Количество целей: <b>{target_count}</b>\n"
   if service_name in ["Взлом VK", "Взлом Instagram", "Взлом TikTok"]:
-    return f"• Цель (Ссылка/Юзер): <b>{target_username}</b>\n"
+    details += f"• Цель (Ссылка/Юзер): <b>{target_username}</b>\n"
   else:
-    return f"• Юзер цели: <b>{target_username}</b>\n"
+    details += f"• Юзер цели: <b>{target_username}</b>\n"
+  return details
 
 
 def get_admin_order_details_text(data):
@@ -526,13 +530,43 @@ async def process_service(callback: CallbackQuery, state: FSMContext):
   price = int(parts[-1])
   service_name = " ".join(parts[1:-1]).replace("_", " ")
 
-  await state.update_data(service_name=service_name, service_price=price, total_price=price)
+  await state.update_data(service_name=service_name, service_price=price)
+  await state.set_state(OrderForm.target_count)
+
+  keyboard = InlineKeyboardMarkup(
+      inline_keyboard=[
+          [InlineKeyboardButton(text="🙋‍♂️ 1 цель", callback_data="target_count_1")],
+          [InlineKeyboardButton(text="👥 2 цели", callback_data="target_count_2")],
+          [InlineKeyboardButton(text="🧑‍🧒‍🧒 3 цели", callback_data="target_count_3")],
+          [InlineKeyboardButton(text="🧑‍🧑‍🧒‍🧒 4 цели", callback_data="target_count_4")],
+          [InlineKeyboardButton(text="🏟️ 5 целей", callback_data="target_count_5")],
+          [InlineKeyboardButton(text="⬅️ Назад", callback_data="catalog_services")],
+      ]
+  )
+
+  await callback.message.edit_text(
+      f"<b>Услуга: {service_name} ({price}$)</b>\n\nВыберите количество целей:",
+      reply_markup=keyboard,
+      parse_mode="HTML"
+  )
+  await callback.answer()
+
+
+@router.callback_query(OrderForm.target_count, F.data.startswith("target_count_"))
+async def process_target_count(callback: CallbackQuery, state: FSMContext):
+  count = int(callback.data.split("_")[-1])
+  data = await state.get_data()
+  service_price = data.get("service_price", 10)
+  total_price = service_price * count
+
+  await state.update_data(target_count=count, total_price=total_price)
   await state.set_state(OrderForm.target_username)
 
+  service_name = data.get("service_name")
   if service_name in ["Взлом VK", "Взлом Instagram", "Взлом TikTok"]:
-    prompt_text = f"<b>Услуга: {service_name} ({price}$)</b>\n\nВведите юзер или ссылку на профиль цели:"
+    prompt_text = f"<b>Услуга: {service_name} ({total_price}$)</b>\n\nВведите юзер или ссылку на профиль цели:"
   else:
-    prompt_text = f"<b>Услуга: {service_name} ({price}$)</b>\n\nВведите юзернейм Telegram аккаунта цели (например, @username):"
+    prompt_text = f"<b>Услуга: {service_name} ({total_price}$)</b>\n\nВведите юзернейм Telegram аккаунта цели (например, @username):"
 
   await callback.message.edit_text(prompt_text, parse_mode="HTML")
   await callback.answer()
@@ -655,7 +689,7 @@ async def process_cryptobot_check(callback: CallbackQuery, state: FSMContext):
 
   service_name = data.get("service_name", "Услуга")
   total_price = data.get("total_price", 10)
-  target_info = f"Юзер: {data.get('target_username')}, Тел: {data.get('target_phone')}"
+  target_info = f"Кол-во целей: {data.get('target_count', 1)}, Юзер: {data.get('target_username')}, Тел: {data.get('target_phone')}"
 
   add_order_to_db(user.id, service_name, total_price, "✅ Оплачено через CryptoBot", target_info)
 
@@ -748,7 +782,7 @@ async def process_receipt_photo(message: Message, state: FSMContext):
 
   service_name = data.get("service_name", "Услуга")
   total_price = data.get("total_price", 10)
-  target_info = f"Юзер: {data.get('target_username')}, Тел: {data.get('target_phone')}"
+  target_info = f"Кол-во целей: {data.get('target_count', 1)}, Юзер: {data.get('target_username')}, Тел: {data.get('target_phone')}"
 
   add_order_to_db(user.id, service_name, total_price, "⏳ Ожидает проверки чека", target_info)
 
