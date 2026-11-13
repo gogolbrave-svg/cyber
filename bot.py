@@ -9,6 +9,7 @@ from aiogram.filters import Command, CommandStart
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
 from aiogram.types import (
+    BotCommand,
     CallbackQuery,
     InlineKeyboardButton,
     InlineKeyboardMarkup,
@@ -107,6 +108,13 @@ class SupportForm(StatesGroup):
   message_text = State()
 
 
+class VacancyForm(StatesGroup):
+  skills = State()
+  experience = State()
+  salary = State()
+  username = State()
+
+
 # Словари для отслеживания активности
 KNOWN_USERS = {}
 PAYMENT_TIMERS = {}
@@ -114,7 +122,7 @@ ABANDONED_CHECKOUTS = {}
 
 router = Router()
 
-# === КРИПТОСЕТИ И РЕКВИЗИТЫ (В СТИЛЕ ПЕРВОГО БОТА) ===
+# === КРИПТОСЕТИ И РЕКВИЗИТЫ ===
 CRYPTO_NETWORKS = {
     "trc20": {
         "name": "USDT (TRC-20)",
@@ -242,7 +250,7 @@ async def run_payment_timer(bot: Bot, chat_id: int, message_id: int, base_text: 
     pass
 
 
-# === СТАТИСТИКА И РЕПУТАЦИЯ ===
+# === РЕПУТАЦИЯ ===
 def get_reputation_text_and_keyboard():
   current_date = datetime.date.today()
   base_date = datetime.date(2026, 1, 1)
@@ -254,7 +262,7 @@ def get_reputation_text_and_keyboard():
   new_requests = rng.randint(30, 80)
 
   text = (
-      "📊 <b>О сервисе и репутации</b>\n\n"
+      "📊 <b>Репутация магазина</b>\n\n"
       f"• Успешно выполнено задач: <b>{completed:,}</b>\n"
       f"• В активной работе: <b>{in_progress}</b>\n"
       f"• Новых заявок сегодня: <b>{new_requests}</b>\n\n"
@@ -264,24 +272,27 @@ def get_reputation_text_and_keyboard():
   return text, keyboard
 
 
-# === ГЛАВНОЕ МЕНЮ С ИКОНКОЙ 💻 ===
+# === ГЛАВНОЕ МЕНЮ ===
 def get_main_menu_text():
   return (
-      "💻 <b>КИБЕР УСЛУГИ</b>\n\n"
+      "🧑‍💻 <b>ARENA SHOP — КИБЕР УСЛУГИ</b>\n\n"
       "Добро пожаловать!\n\n"
-      "Выберите нужный раздел. Если возникнут вопросы — наша поддержка поможет разобраться."
+      "Выберите нужный раздел в меню ниже. Если возникнут вопросы — наша поддержка всегда на связи."
   )
 
 
 def get_main_menu_keyboard():
   return InlineKeyboardMarkup(
       inline_keyboard=[
-          [InlineKeyboardButton(text="🛒 Каталог", callback_data="catalog_services")],
+          [InlineKeyboardButton(text="⚡️ Заказать", callback_data="catalog_services")],
           [
               InlineKeyboardButton(text="📦 Мои заявки", callback_data="my_orders"),
-              InlineKeyboardButton(text="📊 О сервисе", callback_data="about_service"),
+              InlineKeyboardButton(text="📊 Репутация", callback_data="about_service"),
           ],
-          [InlineKeyboardButton(text="💬 Поддержка", callback_data="contact_admin")],
+          [
+              InlineKeyboardButton(text="💬 Поддержка", callback_data="contact_admin"),
+              InlineKeyboardButton(text="💼 Вакансии", callback_data="vacancy_start"),
+          ],
       ]
   )
 
@@ -290,7 +301,7 @@ def get_back_home_keyboard():
   return InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text="🏠 На главную", callback_data="back_home")]])
 
 
-# === CRYPTOBOT ИНВОЙСЫ И ПРОВЕРКА (В СТИЛЕ ПЕРВОГО БОТА) ===
+# === CRYPTOBOT ИНВОЙСЫ И ПРОВЕРКА ===
 async def create_cryptobot_invoice(amount_usd: float, description: str):
   if not CRYPTO_BOT_TOKEN:
     return "", None
@@ -364,6 +375,79 @@ async def cmd_start(message: Message, state: FSMContext):
   await message.answer(get_main_menu_text(), reply_markup=get_main_menu_keyboard(), parse_mode="HTML")
 
 
+@router.message(Command("order"))
+async def cmd_order(message: Message, state: FSMContext):
+  await state.clear()
+  await state.set_state(OrderForm.service)
+  keyboard = InlineKeyboardMarkup(
+      inline_keyboard=[
+          [InlineKeyboardButton(text="💣 Снос Telegram аккаунта — 10$", callback_data="srv_Снос_Telegram_аккаунта_10")],
+          [InlineKeyboardButton(text="🔍 Доксинг (поиск информации) — 20$", callback_data="srv_Доксинг_(Поиск_полной_инфо)_20")],
+          [InlineKeyboardButton(text="🔓 Взлом VK — 40$", callback_data="srv_Взлом_VK_40")],
+          [InlineKeyboardButton(text="📸 Взлом Instagram — 60$", callback_data="srv_Взлом_Instagram_60")],
+          [InlineKeyboardButton(text="🎵 Взлом TikTok — 80$", callback_data="srv_Взлом_TikTok_80")],
+          [InlineKeyboardButton(text="💬 Взлом Telegram аккаунта — 100$", callback_data="srv_Взлом_Telegram_аккаунта_100")],
+          [InlineKeyboardButton(text="🏠 На главную", callback_data="back_home")],
+      ]
+  )
+  await message.answer(
+      "⚡️ <b>Каталог услуг (Заказать)</b>\n\nВыберите подходящий вариант из списка ниже:",
+      reply_markup=keyboard,
+      parse_mode="HTML",
+  )
+
+
+@router.message(Command("my_orders"))
+async def cmd_my_orders(message: Message, state: FSMContext):
+  await state.clear()
+  user_id = message.from_user.id
+  orders = get_user_orders_from_db(user_id)
+
+  if not orders:
+    text = "📦 <b>Мои заказы</b>\n\nУ вас пока нет оформленных заявок. Вы можете создать первую через меню «Заказать»."
+  else:
+    text = "📦 <b>Мои заказы:</b>\n\n"
+    for ord_data in orders:
+      status_badge = "На рассмотрении" if "Ожидает" in ord_data["status"] else ord_data["status"]
+      text += (
+          f"📋 <b>Заявка №{ord_data['id']}</b> — <i>{status_badge}</i>\n"
+          f"📅 Создана: {ord_data['created_at']}\n"
+          f"• Услуга: <b>{ord_data['service_name']}</b>\n"
+          f"• Сумма: <b>{ord_data['total_price']}$</b>\n"
+          f"• Статус: {ord_data['status']}\n\n"
+      )
+    text += "<i>По вопросам заявки можно обратиться в поддержку.</i>"
+
+  await message.answer(text, reply_markup=get_back_home_keyboard(), parse_mode="HTML")
+
+
+@router.message(Command("reputation"))
+async def cmd_reputation(message: Message, state: FSMContext):
+  await state.clear()
+  text, keyboard = get_reputation_text_and_keyboard()
+  await message.answer(text, reply_markup=keyboard, parse_mode="HTML")
+
+
+@router.message(Command("support"))
+async def cmd_support(message: Message, state: FSMContext):
+  await state.set_state(SupportForm.message_text)
+  keyboard = InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text="⬅️ Отменить", callback_data="back_home")]])
+  text = (
+      "💬 <b>Служба поддержки</b>\n\n"
+      "Опишите вашу проблему подробно. Примеры вопросов:\n"
+      "• <i>Проблема с оплатой (не прошел платеж / как перевести)</i>\n"
+      "• <i>Статус выполнения моего заказа</i>\n"
+      "• <i>Вопрос по условиям оказания услуг</i>\n\n"
+      "<i>Вы также можете прикрепить скриншот или фото к сообщению.</i>"
+  )
+  await message.answer(text, reply_markup=keyboard, parse_mode="HTML")
+
+
+@router.message(Command("vacancy"))
+async def cmd_vacancy(message: Message, state: FSMContext):
+  await start_vacancy_process(message, state)
+
+
 @router.callback_query(F.data == "back_home")
 async def back_home(callback: CallbackQuery, state: FSMContext):
   user_id = callback.from_user.id
@@ -391,9 +475,9 @@ async def show_my_orders(callback: CallbackQuery):
   orders = get_user_orders_from_db(user_id)
 
   if not orders:
-    text = "📦 <b>Мои заявки</b>\n\nУ вас пока нет оформленных заявок. Вы можете создать первую через Каталог."
+    text = "📦 <b>Мои заказы</b>\n\nУ вас пока нет оформленных заявок. Вы можете создать первую через меню «Заказать»."
   else:
-    text = "📦 <b>Мои заявки:</b>\n\n"
+    text = "📦 <b>Мои заказы:</b>\n\n"
     for ord_data in orders:
       status_badge = "На рассмотрении" if "Ожидает" in ord_data["status"] else ord_data["status"]
       text += (
@@ -414,7 +498,14 @@ async def show_my_orders(callback: CallbackQuery):
 async def contact_admin_info(callback: CallbackQuery, state: FSMContext):
   await state.set_state(SupportForm.message_text)
   keyboard = InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text="⬅️ Отменить", callback_data="back_home")]])
-  text = "💬 <b>Поддержка</b>\n\nОпишите, с чем нужна помощь.\n<i>Фото или скриншот можно прикрепить к сообщению (необязательно).</i>"
+  text = (
+      "💬 <b>Служба поддержки</b>\n\n"
+      "Опишите вашу проблему подробно. Примеры вопросов:\n"
+      "• <i>Проблема с оплатой (не прошел платеж / как перевести)</i>\n"
+      "• <i>Статус выполнения моего заказа</i>\n"
+      "• <i>Вопрос по условиям оказания услуг</i>\n\n"
+      "<i>Вы также можете прикрепить скриншот или фото к сообщению.</i>"
+  )
   await callback.message.edit_text(text, reply_markup=keyboard, parse_mode="HTML")
   await callback.answer()
 
@@ -451,6 +542,114 @@ async def process_support_message(message: Message, state: FSMContext):
   await state.clear()
 
 
+# === ВАКАНСИИ (ЗАПОЛНЕНИЕ ЗАЯВКИ В 4 ШАГА) ===
+@router.callback_query(F.data == "vacancy_start")
+async def vacancy_callback(callback: CallbackQuery, state: FSMContext):
+  await start_vacancy_process(callback.message, state, edit=True)
+  await callback.answer()
+
+
+async def start_vacancy_process(message: Message, state: FSMContext, edit: bool = False):
+  await state.clear()
+  await state.set_state(VacancyForm.skills)
+  
+  text = (
+      "💼 <b>Заполнение заявки на вакансию (Шаг 1/4)</b>\n\n"
+      "Что вы умеете? Расскажите о своих навыках.\n"
+      "<i>Примеры направлений:</i>\n"
+      "• Снос аккаунтов\n"
+      "• Хакнуть Telegram / Instagram / VK / TikTok\n"
+      "• Доксинг / Деанон\n\n"
+      "Напишите текстовое описание ваших умений:"
+  )
+  keyboard = InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text="⬅️ Отменить", callback_data="back_home")]])
+  
+  if edit:
+    await message.edit_text(text, reply_markup=keyboard, parse_mode="HTML")
+  else:
+    await message.answer(text, reply_markup=keyboard, parse_mode="HTML")
+
+
+@router.message(VacancyForm.skills, F.text)
+async def process_vacancy_skills(message: Message, state: FSMContext):
+  await state.update_data(vacancy_skills=message.text.strip())
+  await state.set_state(VacancyForm.experience)
+  
+  text = (
+      "💼 <b>Заполнение заявки на вакансию (Шаг 2/4)</b>\n\n"
+      "Укажите ваш опыт работы в данной сфере.\n"
+      "<i>Если опыта нет, просто поставьте прочерк (-)</i>"
+  )
+  keyboard = InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text="⬅️ Отменить", callback_data="back_home")]])
+  await message.answer(text, reply_markup=keyboard, parse_mode="HTML")
+
+
+@router.message(VacancyForm.experience, F.text)
+async def process_vacancy_experience(message: Message, state: FSMContext):
+  await state.update_data(vacancy_experience=message.text.strip())
+  await state.set_state(VacancyForm.salary)
+  
+  text = (
+      "💼 <b>Заполнение заявки на вакансию (Шаг 3/4)</b>\n\n"
+      "На какую зарплату/условия вы рассчитываете?"
+  )
+  keyboard = InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text="⬅️ Отменить", callback_data="back_home")]])
+  await message.answer(text, reply_markup=keyboard, parse_mode="HTML")
+
+
+@router.message(VacancyForm.salary, F.text)
+async def process_vacancy_salary(message: Message, state: FSMContext):
+  await state.update_data(vacancy_salary=message.text.strip())
+  await state.set_state(VacancyForm.username)
+  
+  text = (
+      "💼 <b>Заполнение заявки на вакансию (Шаг 4/4)</b>\n\n"
+      "Укажите ваш юзернейм в Telegram (например, @username):"
+  )
+  keyboard = InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text="⬅️ Отменить", callback_data="back_home")]])
+  await message.answer(text, reply_markup=keyboard, parse_mode="HTML")
+
+
+@router.message(VacancyForm.username, F.text)
+async def process_vacancy_final(message: Message, state: FSMContext):
+  await state.update_data(vacancy_username=message.text.strip())
+  data = await state.get_data()
+  user = message.from_user
+
+  skills = data.get("vacancy_skills")
+  experience = data.get("vacancy_experience")
+  salary = data.get("vacancy_salary")
+  tg_username = data.get("vacancy_username")
+
+  user_info = f"@{user.username}" if user.username else f"ID: {user.id}"
+  if user.full_name:
+    user_info = f"{user.full_name} ({user_info})"
+
+  admin_vacancy_text = (
+      "💼 <b>Новая заявка на вакансию!</b>\n\n"
+      f"• Отправитель: {user_info}\n"
+      f"• User ID: <code>{user.id}</code>\n"
+      f"• 1. Что умеет: {skills}\n"
+      f"• 2. Опыт работы: {experience}\n"
+      f"• 3. Ожидания по з/п: {salary}\n"
+      f"• 4. Юзернейм для связи: {tg_username}\n\n"
+      "💬 <i>Сделайте Reply на это сообщение для связи с кандидатом.</i>"
+  )
+
+  if ADMIN_ID:
+    try:
+      await message.bot.send_message(chat_id=ADMIN_ID, text=admin_vacancy_text, parse_mode="HTML")
+    except Exception as e:
+      logger.error(f"Не удалось отправить заявку на вакансию админу: {e}")
+
+  success_text = (
+      "✅ <b>Заявка успешно отправлена!</b>\n\n"
+      "Мы рассмотрим вашу анкету и свяжемся с вами в ближайшее время, если ваша кандидатура нам подойдет."
+  )
+  await message.answer(success_text, reply_markup=get_back_home_keyboard(), parse_mode="HTML")
+  await state.clear()
+
+
 @router.message(F.reply_to_message)
 async def admin_reply_handler(message: Message):
   if not ADMIN_ID or message.from_user.id != ADMIN_ID:
@@ -482,7 +681,7 @@ async def admin_reply_handler(message: Message):
     return
 
   try:
-    answer_text = f"💬 <b>Ответ от поддержки:</b>\n\n{message.text or message.caption or ''}"
+    answer_text = f"💬 <b>Ответ от поддержки/администрации:</b>\n\n{message.text or message.caption or ''}"
     await message.bot.send_message(chat_id=target_user_id, text=answer_text, parse_mode="HTML")
     await message.reply("✅ Ответ успешно отправлен пользователю.")
   except Exception as e:
@@ -513,7 +712,7 @@ async def process_catalog_services(callback: CallbackQuery, state: FSMContext):
       ]
   )
   await callback.message.edit_text(
-      "💻 <b>Каталог услуг</b>\n\nВыберите подходящий вариант из списка ниже:",
+      "⚡️ <b>Каталог услуг (Заказать)</b>\n\nВыберите подходящий вариант из списка ниже:",
       reply_markup=keyboard,
       parse_mode="HTML",
   )
@@ -558,7 +757,7 @@ async def process_target_username(message: Message, state: FSMContext):
   await message.answer(summary_text, reply_markup=keyboard, parse_mode="HTML")
 
 
-# === ОПЛАТА И ШЛЮЗЫ (В СТИЛЕ ПЕРВОГО БОТА, БЕЗ КНОПКИ ГАЙДА) ===
+# === ОПЛАТА И ШЛЮЗЫ ===
 @router.callback_query(F.data == "go_to_payment")
 async def process_go_to_payment(callback: CallbackQuery, state: FSMContext):
   user_id = callback.from_user.id
@@ -800,6 +999,18 @@ async def start_web_server():
 async def main():
   init_db()
   bot = Bot(token=BOT_TOKEN)
+  
+  # Установка команд в меню бота для быстрого доступа (как на скрине)
+  commands = [
+      BotCommand(command="start", description="Главное меню"),
+      BotCommand(command="order", description="Заказать"),
+      BotCommand(command="my_orders", description="Мои заказы"),
+      BotCommand(command="reputation", description="Репутация"),
+      BotCommand(command="support", description="Поддержка"),
+      BotCommand(command="vacancy", description="Вакансии"),
+  ]
+  await bot.set_my_commands(commands)
+
   dp = Dispatcher()
   dp.include_router(router)
 
