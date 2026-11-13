@@ -284,7 +284,7 @@ def get_main_menu_text():
 def get_main_menu_keyboard():
   return InlineKeyboardMarkup(
       inline_keyboard=[
-          [InlineKeyboardButton(text="⚡️ Заказать", callback_data="catalog_services")],
+          [InlineKeyboardButton(text="🛒 Заказать", callback_data="catalog_services")],
           [
               InlineKeyboardButton(text="📦 Мои заявки", callback_data="my_orders"),
               InlineKeyboardButton(text="📊 Репутация", callback_data="about_service"),
