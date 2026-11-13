@@ -115,11 +115,20 @@ class VacancyForm(StatesGroup):
   username = State()
 
 
-# Словари для отслеживания активности
+# Словари и базы в памяти для отслеживания активности и реквизитов
 KNOWN_USERS = {}
 ABANDONED_CHECKOUTS = {}
+CARD_DETAILS = []  # Список реквизитов карт/телефонов
 
 router = Router()
+
+# === СЛОВАРЬ ВАЛЮТ ДЛЯ СТРАН ===
+CURRENCY_CONFIG = {
+    "RUB": {"country": "Россия", "name": "Рубли (RUB)", "symbol": "₽"},
+    "BYN": {"country": "Беларусь", "name": "BYN", "symbol": "BYN"},
+    "UAH": {"country": "Украина", "name": "Гривны (UAH)", "symbol": "грн."},
+    "KZT": {"country": "Казахстан", "name": "Тенге (KZT)", "symbol": "₸"},
+}
 
 # === КРИПТОСЕТИ И РЕКВИЗИТЫ ===
 CRYPTO_NETWORKS = {
@@ -144,6 +153,39 @@ CRYPTO_NETWORKS = {
         "network": "Bitcoin",
     },
 }
+
+
+# === ВСПОМОГАТЕЛЬНЫЕ ФУНКЦИИ ДЛЯ КАРТ И КУРСОВ ===
+def get_active_cards(country: str):
+  now = datetime.datetime.now()
+  active = []
+  for card in CARD_DETAILS:
+    if card["country"].lower() == country.lower():
+      if card["frozen_until"] and card["frozen_until"] > now:
+        continue
+      elif card["frozen_until"] and card["frozen_until"] <= now:
+        card["frozen_until"] = None
+      active.append(card)
+  return active
+
+
+async def get_exchange_rate(target_currency: str) -> float:
+  url = "https://open.er-api.com/v6/latest/USD"
+  try:
+    async with ClientSession() as session:
+      async with session.get(url, timeout=5) as response:
+        if response.status == 200:
+          data = await response.json()
+          rates = data.get("rates", {})
+          if target_currency in rates:
+            return float(rates[target_currency])
+  except Exception as e:
+    logger.warning(f"Не удалось получить курс для {target_currency}: {e}")
+
+  fallback_rates = {
+      "RUB": 95.0, "BYN": 3.3, "KZT": 480.0, "UAH": 41.5,
+  }
+  return fallback_rates.get(target_currency, 1.0)
 
 
 # === АВТОРАССЫЛКА СКИДКИ ===
@@ -259,6 +301,120 @@ def get_back_home_keyboard():
   return InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text="🏠 На главную", callback_data="back_home")]])
 
 
+# === АДМИНСКИЕ КОМАНДЫ ДЛЯ УПРАВЛЕНИЯ КАРТАМИ ===
+@router.message(Command("add"))
+async def cmd_add_card(message: Message):
+  if ADMIN_ID and message.from_user.id != ADMIN_ID:
+    return
+  args = message.text.split(maxsplit=1)
+  if len(args) < 2:
+    await message.reply(
+        "❌ Использование:\n"
+        "• Для РФ/РК: `/add +783839293 ОзонБанк Россия`\n"
+        "• Для УКР/РБ: `/add 6672 7778 1113 8888 ПриватБанк Украина`",
+        parse_mode="Markdown"
+    )
+    return
+
+  parts = args[1].split()
+  if len(parts) < 3:
+    await message.reply("❌ Неверный формат. Укажите реквизиты, банк и страну.")
+    return
+
+  country = parts[-1]
+  bank = parts[-2]
+  details = " ".join(parts[:-2])
+
+  valid_countries = ["Россия", "Казахстан", "Украина", "Беларусь"]
+  if country not in valid_countries:
+    await message.reply(f"❌ Неверная страна. Доступные: {', '.join(valid_countries)}")
+    return
+
+  for card in CARD_DETAILS:
+    if card["details"] == details and card["bank"] == bank and card["country"] == country:
+      await message.reply("⚠️ Такие реквизиты уже существуют в базе.")
+      return
+
+  CARD_DETAILS.append({
+      "details": details,
+      "bank": bank,
+      "country": country,
+      "frozen_until": None
+  })
+  await message.reply(
+      f"✅ <b>Реквизиты успешно добавлены!</b>\n\n"
+      f"🌍 Страна: {country}\n"
+      f"🏦 Банк: {bank}\n"
+      f"💳 Данные: <code>{details}</code>",
+      parse_mode="HTML"
+  )
+
+
+@router.message(Command("delete"))
+async def cmd_delete_card(message: Message):
+  if ADMIN_ID and message.from_user.id != ADMIN_ID:
+    return
+    
+  global CARD_DETAILS
+  
+  args = message.text.split(maxsplit=1)
+  if len(args) < 2:
+    await message.reply("❌ Использование: `/delete <реквизиты> <Банк> <Страна>`", parse_mode="Markdown")
+    return
+
+  parts = args[1].split()
+  if len(parts) < 3:
+    await message.reply("❌ Неверный формат.")
+    return
+
+  country = parts[-1]
+  bank = parts[-2]
+  details = " ".join(parts[:-2])
+
+  initial_len = len(CARD_DETAILS)
+  CARD_DETAILS = [
+      c for c in CARD_DETAILS 
+      if not (c["details"] == details and c["bank"] == bank and c["country"].lower() == country.lower())
+  ]
+
+  if len(CARD_DETAILS) < initial_len:
+    await message.reply("✅ Реквизиты успешно удалены.")
+  else:
+    await message.reply("❌ Реквизиты не найдены в базе.")
+
+
+@router.message(Command("freeze"))
+async def cmd_freeze_card(message: Message):
+  if ADMIN_ID and message.from_user.id != ADMIN_ID:
+    return
+  args = message.text.split(maxsplit=1)
+  if len(args) < 2:
+    await message.reply("❌ Использование: `/freeze <реквизиты> <Банк> <Страна>`", parse_mode="Markdown")
+    return
+
+  parts = args[1].split()
+  if len(parts) < 3:
+    await message.reply("❌ Неверный формат.")
+    return
+
+  country = parts[-1]
+  bank = parts[-2]
+  details = " ".join(parts[:-2])
+
+  found = False
+  now = datetime.datetime.now()
+  for card in CARD_DETAILS:
+    if card["details"] == details and card["bank"] == bank and card["country"].lower() == country.lower():
+      card["frozen_until"] = now + datetime.timedelta(hours=24)
+      found = True
+      break
+
+  if found:
+    await message.reply("✅ Реквизиты зафрижены на 24 часа. По истечении времени они автоматически станут актуальными.")
+  else:
+    await message.reply("❌ Реквизиты не найдены.")
+
+
 # === CRYPTOBOT ИНВОЙСЫ И ПРОВЕРКА ===
 async def create_cryptobot_invoice(amount_usd: float, description: str):
   if not CRYPTO_BOT_TOKEN:
@@ -312,10 +468,12 @@ def get_order_details_text(data):
   service_name = data.get("service_name")
   target_username = data.get("target_username")
 
+  details = ""
   if service_name in ["Взлом VK", "Взлом Instagram", "Взлом TikTok"]:
-    return f"• Цель (Ссылка/Юзер): <b>{target_username}</b>\n"
+    details += f"• Цель (Ссылка/Юзер): <b>{target_username}</b>\n"
   else:
-    return f"• Юзер цели: <b>{target_username}</b>\n"
+    details += f"• Юзер цели: <b>{target_username}</b>\n"
+  return details
 
 
 def get_admin_order_details_text(data):
@@ -718,20 +876,124 @@ async def process_go_to_payment(callback: CallbackQuery, state: FSMContext):
 
   data = await state.get_data()
   total_price = data.get("total_price", 10)
+  service_name = data.get("service_name", "")
 
-  base_text = f"💳 <b>Способ оплаты</b>\n\nСумма: <b>{total_price}$</b>\n\nВыберите вариант:"
+  is_restricted = "убийство" in service_name.lower()
 
-  def get_payment_keyboard():
-    return InlineKeyboardMarkup(
+  if is_restricted:
+    payment_text = (
+        "⏳ <b>Бронирование зафиксировано</b>\n"
+        "Время на завершение оплаты: <b><u>20:00</u></b>\n\n"
+        "⚠️ <b>Внимание:</b> Для выбранной услуги оплата банковскими картами недоступна по соображениям безопасности. Доступна только криптовалюта и CryptoBot.\n\n"
+        f"💳 <b>Способ оплаты</b>\n\n"
+        f"Сумма: <b>{total_price}$</b>\n\n"
+        "Выберите вариант:"
+    )
+    keyboard = InlineKeyboardMarkup(
         inline_keyboard=[
             [InlineKeyboardButton(text="🤖 CryptoBot (без комиссий)", callback_data="pay_cryptobot")],
             [InlineKeyboardButton(text="🪙 Криптовалюта (выбор сети)", callback_data="crypto_expert")],
-            [InlineKeyboardButton(text="💬 Нужна помощь", callback_data="payment_help_manager")],
+            [InlineKeyboardButton(text="💬 Нужна помощь", callback_data="payment_help_manager")]
+        ]
+    )
+  else:
+    payment_text = (
+        "⏳ <b>Бронирование зафиксировано</b>\n"
+        "Время на завершение оплаты: <b><u>20:00</u></b>\n\n"
+        f"💳 <b>Способ оплаты</b>\n\n"
+        f"Сумма: <b>{total_price}$</b>\n\n"
+        "Выберите вариант валюты для оплаты картой или крипто-шлюзы:"
+    )
+    keyboard = InlineKeyboardMarkup(
+        inline_keyboard=[
+            [InlineKeyboardButton(text="💳 Оплатить в рублях", callback_data="pay_currency_RUB")],
+            [InlineKeyboardButton(text="💳 Оплатить в BYN", callback_data="pay_currency_BYN")],
+            [InlineKeyboardButton(text="💳 Оплатить в гривнах", callback_data="pay_currency_UAH")],
+            [InlineKeyboardButton(text="💳 Оплатить в тенге", callback_data="pay_currency_KZT")],
+            [InlineKeyboardButton(text="🤖 CryptoBot (без комиссий)", callback_data="pay_cryptobot")],
+            [InlineKeyboardButton(text="🪙 Криптовалюта (выбор сети)", callback_data="crypto_expert")],
+            [InlineKeyboardButton(text="💬 Нужна помощь", callback_data="payment_help_manager")]
         ]
     )
 
-  initial_text = f"⏳ <b>Бронирование зафиксировано</b>\nВремя на завершение оплаты: <b><u>20:00</u></b>\n\n{base_text}"
-  await callback.message.edit_text(initial_text, reply_markup=get_payment_keyboard(), parse_mode="HTML")
+  await callback.message.edit_text(payment_text, reply_markup=keyboard, parse_mode="HTML")
+  await callback.answer()
+
+
+@router.callback_query(F.data.startswith("pay_currency_"))
+async def process_pay_currency(callback: CallbackQuery, state: FSMContext):
+  curr_code = callback.data.split("_")[2] # RUB, BYN, UAH, KZT
+  config = CURRENCY_CONFIG.get(curr_code, {"country": "Россия", "name": "Рубли", "symbol": "₽"})
+  country = config["country"]
+
+  await state.update_data(selected_currency=curr_code, selected_country=country)
+
+  data = await state.get_data()
+  total_price = data.get("total_price", 10)
+  
+  rate = 95.0
+  if curr_code == "RUB":
+    rate = await get_exchange_rate("RUB")
+  elif curr_code == "BYN":
+    rate = await get_exchange_rate("BYN")
+  elif curr_code == "UAH":
+    rate = await get_exchange_rate("UAH")
+  elif curr_code == "KZT":
+    rate = await get_exchange_rate("KZT")
+
+  local_amount = round(total_price * rate)
+  active_cards = get_active_cards(country)
+
+  if not active_cards:
+    if curr_code == "RUB":
+      payment_type_desc = "рублях/СБП"
+    elif curr_code == "KZT":
+      payment_type_desc = "тенге/Kaspi"
+    elif curr_code == "UAH":
+      payment_type_desc = "гривнах"
+    else:
+      payment_type_desc = "BYN"
+
+    text = (
+        f"❌ <b>Реквизиты временно недоступны</b>\n\n"
+        f"К сожалению, в данный момент реквизиты для оплаты в <b>{config['name']}</b> недоступны.\n\n"
+        "Мы уже решаем эту проблему. Пожалуйста, оплатите через <b>CryptoBot</b> или реквизиты криптовалюты 👇"
+    )
+    keyboard = InlineKeyboardMarkup(
+        inline_keyboard=[
+            [InlineKeyboardButton(text="🤖 CryptoBot", callback_data="pay_cryptobot")],
+            [InlineKeyboardButton(text="🪙 Криптовалюта", callback_data="crypto_expert")],
+            [InlineKeyboardButton(text="⬅️ Назад", callback_data="go_to_payment")]
+        ]
+    )
+    await callback.message.edit_text(text, reply_markup=keyboard, parse_mode="HTML")
+    await callback.answer()
+    return
+
+  cards_text = ""
+  for idx, c in enumerate(active_cards, 1):
+    cards_text += f"<b>{idx}. Банк:</b> {c['bank']}\n<b>Реквизиты:</b> <code>{c['details']}</code>\n\n"
+
+  header_map = {
+      "RUB": "Оплата в рублях",
+      "KZT": "Оплата в тенге (Kaspi)",
+      "UAH": "Оплата в гривнах",
+      "BYN": "Оплата в BYN"
+  }
+  header_title = header_map.get(curr_code, "Оплата по реквизитам")
+
+  text = (
+      f"💳 <b>{header_title}</b>\n\n"
+      f"• Сумма к оплате: <b>{total_price}$</b> <i>(≈ {local_amount:,} {config['symbol']})</i>\n\n"
+      f"⚠️ <b>Внимание!</b> Перевод осуществлять <b>строго</b> на указанный ниже банк и реквизиты:\n\n"
+      f"{cards_text}"
+      "💡 <i>После перевода средств нажмите кнопку ниже, чтобы прикрепить чек.</i>"
+  )
+  keyboard = InlineKeyboardMarkup(inline_keyboard=[
+      [InlineKeyboardButton(text="✅ Прикрепить чек", callback_data="ask_for_receipt")],
+      [InlineKeyboardButton(text="⬅️ Назад", callback_data="go_to_payment")]
+  ])
+  await callback.message.edit_text(text, reply_markup=keyboard, parse_mode="HTML")
   await callback.answer()
 
 
@@ -787,7 +1049,7 @@ async def process_cryptobot_check(callback: CallbackQuery, state: FSMContext):
 
   service_name = data.get("service_name", "Услуга")
   total_price = data.get("total_price", 10)
-  target_info = f"Юзер: {data.get('target_username')}, Тел: {data.get('target_phone')}"
+  target_info = f"Юзер: {data.get('target_username')}"
 
   add_order_to_db(user.id, service_name, total_price, "✅ Оплачено через CryptoBot", target_info)
 
@@ -873,7 +1135,7 @@ async def process_receipt_photo(message: Message, state: FSMContext):
 
   service_name = data.get("service_name", "Услуга")
   total_price = data.get("total_price", 10)
-  target_info = f"Юзер: {data.get('target_username')}, Тел: {data.get('target_phone')}"
+  target_info = f"Юзер: {data.get('target_username')}"
 
   add_order_to_db(user.id, service_name, total_price, "⏳ Ожидает проверки чека", target_info)
 
@@ -926,7 +1188,6 @@ async def main():
   init_db()
   bot = Bot(token=BOT_TOKEN)
   
-  # Установка команд в меню бота для быстрого доступа
   commands = [
       BotCommand(command="start", description="Главное меню"),
       BotCommand(command="order", description="Заказать"),
