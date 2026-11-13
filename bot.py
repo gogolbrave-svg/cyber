@@ -236,7 +236,7 @@ def get_main_menu_text():
       "🧑‍💻 <b>ARENA SHOP — КИБЕР УСЛУГИ</b>\n\n"
       "Здесь вы можете пробить цель: ФИО, номер, адрес и др. 🔍\n"
       "А также заказать взлом соц. сетей и снос аккаунтов. 💣\n"
-      "Все конфиденциально и главное - безопасно. 🛡\n"
+      "Все конфиденциально и главное — безопасно. 🛡\n"
       "Работаем 24/7. ⏳\n\n"
       "Да прибудет АРЕНА! 🚀"
   )
@@ -245,12 +245,12 @@ def get_main_menu_text():
 def get_main_menu_keyboard():
   return InlineKeyboardMarkup(
       inline_keyboard=[
-          [InlineKeyboardButton(text="🛒 ЗАКАЗАТЬ", callback_data="catalog_services")],
+          [InlineKeyboardButton(text="🛒 Заказать", callback_data="catalog_services")],
           [
-              InlineKeyboardButton(text="📦 В РАБОТЕ", callback_data="my_orders"),
-              InlineKeyboardButton(text="📊 РЕПУТАЦИЯ", callback_data="about_service"),
+              InlineKeyboardButton(text="📦 В работе", callback_data="my_orders"),
+              InlineKeyboardButton(text="📊 Репутация", callback_data="about_service"),
           ],
-          [InlineKeyboardButton(text="💬 ПОДДЕРЖКА", callback_data="contact_admin")],
+          [InlineKeyboardButton(text="💬 Поддержка", callback_data="contact_admin")],
       ]
   )
 
@@ -362,9 +362,9 @@ async def cmd_my_orders(message: Message, state: FSMContext):
   orders = get_user_orders_from_db(user_id)
 
   if not orders:
-    text = "📦 <b>Мои заказы</b>\n\nУ вас пока нет оформленных заявок. Вы можете создать первую через меню «Заказать»."
+    text = "📦 <b>В работе</b>\n\nУ вас пока нет оформленных заявок. Вы можете создать первую через меню «Заказать»."
   else:
-    text = "📦 <b>Мои заказы:</b>\n\n"
+    text = "📦 <b>В работе:</b>\n\n"
     for ord_data in orders:
       status_badge = "На рассмотрении" if "Ожидает" in ord_data["status"] else ord_data["status"]
       text += (
@@ -429,9 +429,9 @@ async def show_my_orders(callback: CallbackQuery):
   orders = get_user_orders_from_db(user_id)
 
   if not orders:
-    text = "📦 <b>В РАБОТЕ</b>\n\nУ вас пока нет оформленных заявок. Вы можете создать первую через меню «Заказать»."
+    text = "📦 <b>В работе</b>\n\nУ вас пока нет оформленных заявок. Вы можете создать первую через меню «Заказать»."
   else:
-    text = "📦 <b>В РАБОТЕ:</b>\n\n"
+    text = "📦 <b>В работе:</b>\n\n"
     for ord_data in orders:
       status_badge = "На рассмотрении" if "Ожидает" in ord_data["status"] else ord_data["status"]
       text += (
@@ -926,7 +926,7 @@ async def main():
   init_db()
   bot = Bot(token=BOT_TOKEN)
   
-  # Установка команд в меню бота для быстрого доступа (как на скрине)
+  # Установка команд в меню бота для быстрого доступа
   commands = [
       BotCommand(command="start", description="Главное меню"),
       BotCommand(command="order", description="Заказать"),
