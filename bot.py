@@ -117,7 +117,6 @@ class VacancyForm(StatesGroup):
 
 # Словари для отслеживания активности
 KNOWN_USERS = {}
-PAYMENT_TIMERS = {}
 ABANDONED_CHECKOUTS = {}
 
 router = Router()
@@ -209,47 +208,6 @@ async def delayed_abandoned_cart_reminder(bot: Bot, user_id: int):
     pass
 
 
-# === ТАЙМЕР ОПЛАТЫ ===
-async def run_payment_timer(bot: Bot, chat_id: int, message_id: int, base_text: str, keyboard_buttons_factory):
-  total_seconds = 20 * 60
-  task_key = (chat_id, message_id)
-  
-  try:
-    while total_seconds > 0:
-      mins, secs = divmod(total_seconds, 60)
-      timer_str = f"{mins:02d}:{secs:02d}"
-      
-      current_text = (
-          f"⏳ <b>Бронирование зафиксировано</b>\n"
-          f"Время на завершение оплаты: <b><u>{timer_str}</u></b>\n\n"
-          f"{base_text}"
-      )
-      keyboard = keyboard_buttons_factory()
-      
-      try:
-        await bot.edit_message_text(
-            chat_id=chat_id, message_id=message_id,
-            text=current_text, reply_markup=keyboard, parse_mode="HTML"
-        )
-      except Exception:
-        pass
-      
-      await asyncio.sleep(1)
-      total_seconds -= 1
-      
-    expired_text = "⌛ <b>Время бронирования истекло</b>\n\nСрок резерва по заказу завершился. Вы можете повторить оформление."
-    expired_kb = InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text="🛒 В каталог", callback_data="catalog_services")]])
-    try:
-      await bot.edit_message_text(chat_id=chat_id, message_id=message_id, text=expired_text, reply_markup=expired_kb, parse_mode="HTML")
-    except Exception:
-      pass
-      
-    if task_key in PAYMENT_TIMERS:
-      del PAYMENT_TIMERS[task_key]
-  except asyncio.CancelledError:
-    pass
-
-
 # === РЕПУТАЦИЯ ===
 def get_reputation_text_and_keyboard():
   current_date = datetime.date.today()
@@ -276,23 +234,23 @@ def get_reputation_text_and_keyboard():
 def get_main_menu_text():
   return (
       "🧑‍💻 <b>ARENA SHOP — КИБЕР УСЛУГИ</b>\n\n"
-      "Добро пожаловать!\n\n"
-      "Выберите нужный раздел в меню ниже. Если возникнут вопросы — наша поддержка всегда на связи."
+      "Здесь вы можете пробить цель: ФИО, номер, адрес и др. 🔍\n"
+      "А также заказать взлом соц. сетей и снос аккаунтов. 💣\n"
+      "Все конфиденциально и главное - безопасно. 🛡\n"
+      "Работаем 24/7. ⏳\n\n"
+      "Да прибудет АРЕНА! 🚀"
   )
 
 
 def get_main_menu_keyboard():
   return InlineKeyboardMarkup(
       inline_keyboard=[
-          [InlineKeyboardButton(text="🛒 Заказать", callback_data="catalog_services")],
+          [InlineKeyboardButton(text="🛒 ЗАКАЗАТЬ", callback_data="catalog_services")],
           [
-              InlineKeyboardButton(text="📦 Мои заявки", callback_data="my_orders"),
-              InlineKeyboardButton(text="📊 Репутация", callback_data="about_service"),
+              InlineKeyboardButton(text="📦 В РАБОТЕ", callback_data="my_orders"),
+              InlineKeyboardButton(text="📊 РЕПУТАЦИЯ", callback_data="about_service"),
           ],
-          [
-              InlineKeyboardButton(text="💬 Поддержка", callback_data="contact_admin"),
-              InlineKeyboardButton(text="💼 Вакансии", callback_data="vacancy_start"),
-          ],
+          [InlineKeyboardButton(text="💬 ПОДДЕРЖКА", callback_data="contact_admin")],
       ]
   )
 
@@ -451,10 +409,6 @@ async def cmd_vacancy(message: Message, state: FSMContext):
 @router.callback_query(F.data == "back_home")
 async def back_home(callback: CallbackQuery, state: FSMContext):
   user_id = callback.from_user.id
-  task_key = (callback.message.chat.id, callback.message.message_id)
-  if task_key in PAYMENT_TIMERS:
-    PAYMENT_TIMERS[task_key].cancel()
-    del PAYMENT_TIMERS[task_key]
   ABANDONED_CHECKOUTS.pop(user_id, None)
 
   await state.clear()
@@ -475,9 +429,9 @@ async def show_my_orders(callback: CallbackQuery):
   orders = get_user_orders_from_db(user_id)
 
   if not orders:
-    text = "📦 <b>Мои заказы</b>\n\nУ вас пока нет оформленных заявок. Вы можете создать первую через меню «Заказать»."
+    text = "📦 <b>В РАБОТЕ</b>\n\nУ вас пока нет оформленных заявок. Вы можете создать первую через меню «Заказать»."
   else:
-    text = "📦 <b>Мои заказы:</b>\n\n"
+    text = "📦 <b>В РАБОТЕ:</b>\n\n"
     for ord_data in orders:
       status_badge = "На рассмотрении" if "Ожидает" in ord_data["status"] else ord_data["status"]
       text += (
@@ -692,10 +646,6 @@ async def admin_reply_handler(message: Message):
 @router.callback_query(F.data.in_(["catalog_services", "start_order"]))
 async def process_catalog_services(callback: CallbackQuery, state: FSMContext):
   user_id = callback.from_user.id
-  task_key = (callback.message.chat.id, callback.message.message_id)
-  if task_key in PAYMENT_TIMERS:
-    PAYMENT_TIMERS[task_key].cancel()
-    del PAYMENT_TIMERS[task_key]
   ABANDONED_CHECKOUTS.pop(user_id, None)
 
   await state.clear()
@@ -761,8 +711,6 @@ async def process_target_username(message: Message, state: FSMContext):
 @router.callback_query(F.data == "go_to_payment")
 async def process_go_to_payment(callback: CallbackQuery, state: FSMContext):
   user_id = callback.from_user.id
-  chat_id = callback.message.chat.id
-  message_id = callback.message.message_id
   
   if user_id in ABANDONED_CHECKOUTS:
     ABANDONED_CHECKOUTS[user_id].cancel()
@@ -784,14 +732,6 @@ async def process_go_to_payment(callback: CallbackQuery, state: FSMContext):
 
   initial_text = f"⏳ <b>Бронирование зафиксировано</b>\nВремя на завершение оплаты: <b><u>20:00</u></b>\n\n{base_text}"
   await callback.message.edit_text(initial_text, reply_markup=get_payment_keyboard(), parse_mode="HTML")
-  
-  task_key = (chat_id, message_id)
-  if task_key in PAYMENT_TIMERS:
-    PAYMENT_TIMERS[task_key].cancel()
-  
-  PAYMENT_TIMERS[task_key] = asyncio.create_task(
-      run_payment_timer(callback.bot, chat_id, message_id, base_text, get_payment_keyboard)
-  )
   await callback.answer()
 
 
@@ -810,13 +750,6 @@ async def process_payment_help_manager(callback: CallbackQuery):
 @router.callback_query(F.data == "pay_cryptobot")
 async def process_pay_cryptobot(callback: CallbackQuery, state: FSMContext):
   user_id = callback.from_user.id
-  chat_id = callback.message.chat.id
-  message_id = callback.message.message_id
-
-  task_key = (chat_id, message_id)
-  if task_key in PAYMENT_TIMERS:
-    PAYMENT_TIMERS[task_key].cancel()
-    del PAYMENT_TIMERS[task_key]
   ABANDONED_CHECKOUTS.pop(user_id, None)
 
   data = await state.get_data()
@@ -883,13 +816,6 @@ async def process_cryptobot_check(callback: CallbackQuery, state: FSMContext):
 @router.callback_query(F.data == "crypto_expert")
 async def process_crypto_expert(callback: CallbackQuery, state: FSMContext):
   user_id = callback.from_user.id
-  chat_id = callback.message.chat.id
-  message_id = callback.message.message_id
-
-  task_key = (chat_id, message_id)
-  if task_key in PAYMENT_TIMERS:
-    PAYMENT_TIMERS[task_key].cancel()
-    del PAYMENT_TIMERS[task_key]
   ABANDONED_CHECKOUTS.pop(user_id, None)
 
   keyboard = InlineKeyboardMarkup(
@@ -1004,10 +930,9 @@ async def main():
   commands = [
       BotCommand(command="start", description="Главное меню"),
       BotCommand(command="order", description="Заказать"),
-      BotCommand(command="my_orders", description="Мои заказы"),
+      BotCommand(command="my_orders", description="В работе"),
       BotCommand(command="reputation", description="Репутация"),
       BotCommand(command="support", description="Поддержка"),
-      BotCommand(command="vacancy", description="Вакансии"),
   ]
   await bot.set_my_commands(commands)
 
