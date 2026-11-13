@@ -530,7 +530,7 @@ async def process_service(callback: CallbackQuery, state: FSMContext):
   await state.set_state(OrderForm.target_username)
 
   if service_name in ["Взлом VK", "Взлом Instagram", "Взлом TikTok"]:
-    prompt_text = f"<b>Услуга: {service_name} ({price}$)</b>\n\nВведите номер или ссылку на профиль цели:"
+    prompt_text = f"<b>Услуга: {service_name} ({price}$)</b>\n\nВведите юзер или ссылку на профиль цели:"
   else:
     prompt_text = f"<b>Услуга: {service_name} ({price}$)</b>\n\nВведите юзернейм Telegram аккаунта цели (например, @username):"
 
