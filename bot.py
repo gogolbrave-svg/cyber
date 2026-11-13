@@ -100,7 +100,6 @@ def get_user_orders_from_db(user_id: int):
 class OrderForm(StatesGroup):
   service = State()
   target_username = State()
-  target_phone = State()
   receipt = State()
 
 
@@ -343,15 +342,11 @@ async def check_cryptobot_invoice_status(invoice_id: int) -> bool:
 def get_order_details_text(data):
   service_name = data.get("service_name")
   target_username = data.get("target_username")
-  target_phone = data.get("target_phone")
 
   if service_name in ["Взлом VK", "Взлом Instagram", "Взлом TikTok"]:
     return f"• Цель (Ссылка/Юзер): <b>{target_username}</b>\n"
   else:
-    return (
-        f"• Юзер цели: <b>{target_username}</b>\n"
-        f"• Телефон цели: <b>{target_phone}</b>\n"
-    )
+    return f"• Юзер цели: <b>{target_username}</b>\n"
 
 
 def get_admin_order_details_text(data):
@@ -546,35 +541,8 @@ async def process_service(callback: CallbackQuery, state: FSMContext):
 @router.message(OrderForm.target_username, F.text)
 async def process_target_username(message: Message, state: FSMContext):
   target_val = message.text.strip()
-  await state.update_data(target_username=target_val)
+  await state.update_data(target_username=target_val, target_phone="-")
   data = await state.get_data()
-  service_name = data.get("service_name")
-
-  if service_name in ["Взлом VK", "Взлом Instagram", "Взлом TikTok"]:
-    await state.update_data(target_phone="-")
-    data = await state.get_data()
-    total_price = data.get("total_price", 0)
-
-    summary_text = (
-        "✨ <b>Заявка готова</b>\n\n"
-        "📋 <b>Детали вашего заказа:</b>\n"
-        f"• Услуга: <b>{service_name}</b>\n"
-        f"{get_order_details_text(data)}"
-        f"💵 <b>К оплате:</b> <b>{total_price}$</b>\n\n"
-        "💳 Перейдите к оплате удобным способом с помощью кнопки ниже 👇"
-    )
-    keyboard = InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text="💳 Перейти к оплате", callback_data="go_to_payment")]])
-    await message.answer(summary_text, reply_markup=keyboard, parse_mode="HTML")
-  else:
-    await state.set_state(OrderForm.target_phone)
-    await message.answer("Введите номер телефона цели (или укажите '-', если неизвестен):", parse_mode="HTML")
-
-
-@router.message(OrderForm.target_phone, F.text)
-async def process_target_phone(message: Message, state: FSMContext):
-  await state.update_data(target_phone=message.text.strip())
-  data = await state.get_data()
-
   service_name = data.get("service_name")
   total_price = data.get("total_price", 0)
 
