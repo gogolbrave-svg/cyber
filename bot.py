@@ -118,7 +118,8 @@ class VacancyForm(StatesGroup):
 # Словари и базы в памяти для отслеживания активности и реквизитов
 KNOWN_USERS = {}
 ABANDONED_CHECKOUTS = {}
-CARD_DETAILS = []  # Список реквизитов карт/телефонов
+CARD_DETAILS = []      # Список реквизитов карт/телефонов
+CARD_POINTERS = {}     # Индексы для циклического чередования реквизитов по странам
 
 router = Router()
 
@@ -155,8 +156,8 @@ CRYPTO_NETWORKS = {
 }
 
 
-# === ВСПОМОГАТЕЛЬНЫЕ ФУНКЦИИ ДЛЯ КАРТ И КУРСОВ ===
-def get_active_cards(country: str):
+# === ВСПОМОГАТЕЛЬНЫЕ ФУНКЦИИ ДЛЯ КАРТ И ЧЕРЕДОВАНИЯ (ROUND-ROBIN) ===
+def get_next_card(country: str):
   now = datetime.datetime.now()
   active = []
   for card in CARD_DETAILS:
@@ -166,7 +167,18 @@ def get_active_cards(country: str):
       elif card["frozen_until"] and card["frozen_until"] <= now:
         card["frozen_until"] = None
       active.append(card)
-  return active
+
+  if not active:
+    return None
+
+  if country not in CARD_POINTERS:
+    CARD_POINTERS[country] = 0
+
+  index = CARD_POINTERS[country] % len(active)
+  chosen_card = active[index]
+  CARD_POINTERS[country] = (index + 1) % len(active)
+
+  return chosen_card
 
 
 async def get_exchange_rate(target_currency: str) -> float:
@@ -931,20 +943,13 @@ async def process_pay_currency(callback: CallbackQuery, state: FSMContext):
   data = await state.get_data()
   total_price = data.get("total_price", 10)
   
-  rate = 95.0
-  if curr_code == "RUB":
-    rate = await get_exchange_rate("RUB")
-  elif curr_code == "BYN":
-    rate = await get_exchange_rate("BYN")
-  elif curr_code == "UAH":
-    rate = await get_exchange_rate("UAH")
-  elif curr_code == "KZT":
-    rate = await get_exchange_rate("KZT")
-
+  rate = await get_exchange_rate(curr_code)
   local_amount = round(total_price * rate)
-  active_cards = get_active_cards(country)
 
-  if not active_cards:
+  # Получаем реквизит строго по кругу (Round-Robin) для выбранной страны
+  card = get_next_card(country)
+
+  if not card:
     if curr_code == "RUB":
       payment_type_desc = "рублях/СБП"
     elif curr_code == "KZT":
@@ -970,10 +975,6 @@ async def process_pay_currency(callback: CallbackQuery, state: FSMContext):
     await callback.answer()
     return
 
-  cards_text = ""
-  for idx, c in enumerate(active_cards, 1):
-    cards_text += f"<b>{idx}. Банк:</b> {c['bank']}\n<b>Реквизиты:</b> <code>{c['details']}</code>\n\n"
-
   header_map = {
       "RUB": "Оплата в рублях",
       "KZT": "Оплата в тенге (Kaspi)",
@@ -985,8 +986,9 @@ async def process_pay_currency(callback: CallbackQuery, state: FSMContext):
   text = (
       f"💳 <b>{header_title}</b>\n\n"
       f"• Сумма к оплате: <b>{total_price}$</b> <i>(≈ {local_amount:,} {config['symbol']})</i>\n\n"
-      f"⚠️ <b>Внимание!</b> Перевод осуществлять <b>строго</b> на указанный ниже банк и реквизиты:\n\n"
-      f"{cards_text}"
+      f"⚠️ <b>Внимание!</b> Перевод осуществлять <b>строго</b> на указанные реквизиты:\n\n"
+      f"<b>Банк:</b> {card['bank']}\n"
+      f"<b>Реквизиты:</b> <code>{card['details']}</code>\n\n"
       "💡 <i>После перевода средств нажмите кнопку ниже, чтобы прикрепить чек.</i>"
   )
   keyboard = InlineKeyboardMarkup(inline_keyboard=[
