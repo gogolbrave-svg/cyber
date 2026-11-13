@@ -309,6 +309,43 @@ async def get_reputation_text_and_keyboard():
   return text, keyboard
 
 
+# === ВСПОМОГАТЕЛЬНЫЕ ФУНКЦИИ ДЛЯ ОПИСАНИЯ ЦЕЛИ В ЗАКАЗЕ ===
+def get_order_details_text(data):
+  service_name = data.get("service_name")
+  target_username = data.get("target_username")
+  target_phone = data.get("target_phone")
+
+  if service_name == "Взлом VK":
+    return f"• Номер или ссылка на VK: <b>{target_username}</b>\n"
+  elif service_name == "Взлом Instagram":
+    return f"• Юзер Instagram или ссылка: <b>{target_username}</b>\n"
+  elif service_name == "Взлом TikTok":
+    return f"• Юзер TikTok или ссылка: <b>{target_username}</b>\n"
+  else:
+    return (
+        f"• Юзер Telegram цели: <b>{target_username}</b>\n"
+        f"• Номер телефона цели: <b>{target_phone}</b>\n"
+    )
+
+
+def get_admin_order_details_text(data):
+  service_name = data.get("service_name")
+  target_username = data.get("target_username")
+  target_phone = data.get("target_phone")
+
+  if service_name == "Взлом VK":
+    return f"• Цель (Номер / ссылка): {target_username}\n"
+  elif service_name == "Взлом Instagram":
+    return f"• Цель (Юзер / ссылка): {target_username}\n"
+  elif service_name == "Взлом TikTok":
+    return f"• Цель (Юзер / ссылка): {target_username}\n"
+  else:
+    return (
+        f"• Юзер цели: {target_username}\n"
+        f"• Телефон цели: {target_phone}\n"
+    )
+
+
 # === 0. ГЛАВНОЕ МЕНЮ И КОМАНДЫ ===
 @router.message(CommandStart())
 async def cmd_start(message: Message, state: FSMContext):
@@ -757,24 +794,70 @@ async def process_service(callback: CallbackQuery, state: FSMContext):
   )
   await state.set_state(OrderForm.target_username)
 
-  await callback.message.edit_text(
-      f"<b>Шаг 1 из 2: Юзер Telegram аккаунта цели</b>\n\n"
-      f"Выбрано: <b>{service_name}</b> ({price}$)\n\n"
-      "Введите юзернейм Telegram аккаунта цели (например, @username):",
-      parse_mode="HTML",
-  )
+  if service_name == "Взлом VK":
+    prompt_text = (
+        f"<b>Шаг 1 из 1: Номер или ссылка на VK</b>\n\n"
+        f"Выбрано: <b>{service_name}</b> ({price}$)\n\n"
+        "Введите номер или ссылку на VK:"
+    )
+  elif service_name == "Взлом Instagram":
+    prompt_text = (
+        f"<b>Шаг 1 из 1: Юзер Instagram или ссылка</b>\n\n"
+        f"Выбрано: <b>{service_name}</b> ({price}$)\n\n"
+        "Введите юзер инстаграм или ссылку:"
+    )
+  elif service_name == "Взлом TikTok":
+    prompt_text = (
+        f"<b>Шаг 1 из 1: Юзер TikTok или ссылка</b>\n\n"
+        f"Выбрано: <b>{service_name}</b> ({price}$)\n\n"
+        "Введите юзер тик ток или ссылку:"
+    )
+  else:
+    prompt_text = (
+        f"<b>Шаг 1 из 2: Юзер Telegram аккаунта цели</b>\n\n"
+        f"Выбрано: <b>{service_name}</b> ({price}$)\n\n"
+        "Введите юзернейм Telegram аккаунта цели (например, @username):"
+    )
+
+  await callback.message.edit_text(prompt_text, parse_mode="HTML")
   await callback.answer()
 
 
 @router.message(OrderForm.target_username, F.text)
 async def process_target_username(message: Message, state: FSMContext):
-  await state.update_data(target_username=message.text.strip())
-  await state.set_state(OrderForm.target_phone)
-  await message.answer(
-      "<b>Шаг 2 из 2: Номер телефона цели</b>\n\n"
-      "Введите номер телефона цели (или укажите '-', если неизвестен):",
-      parse_mode="HTML",
-  )
+  target_val = message.text.strip()
+  await state.update_data(target_username=target_val)
+  data = await state.get_data()
+  service_name = data.get("service_name")
+
+  if service_name in ["Взлом VK", "Взлом Instagram", "Взлом TikTok"]:
+    await state.update_data(target_phone="-")
+    data = await state.get_data()
+    total_price = data.get("total_price", 0)
+
+    summary_text = (
+        "✨ <b>Анкета успешно сформирована</b>\n\n"
+        "📋 <b>Детали вашего заказа:</b>\n"
+        f"• Услуга: <b>{service_name}</b>\n"
+        f"{get_order_details_text(data)}"
+        f"💵 <b>К оплате:</b> <b>{total_price}$</b>\n\n"
+        "💳 Перейдите к оплате удобным способом с помощью кнопки ниже 👇"
+    )
+
+    keyboard = InlineKeyboardMarkup(
+        inline_keyboard=[
+            [InlineKeyboardButton(text="💳 Перейти к оплате", callback_data="go_to_payment")]
+        ]
+    )
+
+    await message.answer(summary_text, reply_markup=keyboard, parse_mode="HTML")
+  else:
+    await state.set_state(OrderForm.target_phone)
+    await message.answer(
+        "<b>Шаг 2 из 2: Номер телефона цели</b>\n\n"
+        "Введите номер телефона цели (или укажите '-', если неизвестен):",
+        parse_mode="HTML",
+    )
 
 
 @router.message(OrderForm.target_phone, F.text)
@@ -783,16 +866,13 @@ async def process_target_phone(message: Message, state: FSMContext):
   data = await state.get_data()
 
   service_name = data.get("service_name")
-  target_username = data.get("target_username")
-  target_phone = data.get("target_phone")
   total_price = data.get("total_price", 0)
 
   summary_text = (
       "✨ <b>Анкета успешно сформирована</b>\n\n"
       "📋 <b>Детали вашего заказа:</b>\n"
       f"• Услуга: <b>{service_name}</b>\n"
-      f"• Юзер Telegram цели: <b>{target_username}</b>\n"
-      f"• Номер телефона цели: <b>{target_phone}</b>\n\n"
+      f"{get_order_details_text(data)}"
       f"💵 <b>К оплате:</b> <b>{total_price}$</b>\n\n"
       "💳 Перейдите к оплате удобным способом с помощью кнопки ниже 👇"
   )
@@ -1006,8 +1086,7 @@ async def process_cryptobot_check(callback: CallbackQuery, state: FSMContext):
       f"• От кого: {user_info}\n"
       f"• User ID: <code>{user.id}</code>\n"
       f"• Услуга: <b>{data.get('service_name')}</b>\n"
-      f"• Юзер цели: {data.get('target_username')}\n"
-      f"• Телефон цели: {data.get('target_phone')}\n"
+      f"{get_admin_order_details_text(data)}"
       f"• Сумма: <b>{data.get('total_price')}$</b>\n\n"
       f"💬 <i>Оплачено через CryptoBot. Проверьте поступление в боте. Сделайте Reply на это сообщение для ответа.</i>"
   )
@@ -1276,8 +1355,7 @@ async def process_receipt_photo(message: Message, state: FSMContext):
       f"• От кого: {user_info}\n"
       f"• User ID: <code>{user.id}</code>\n"
       f"• Услуга: <b>{data.get('service_name')}</b>\n"
-      f"• Юзер цели: {data.get('target_username')}\n"
-      f"• Телефон цели: {data.get('target_phone')}\n"
+      f"{get_admin_order_details_text(data)}"
       f"• Сумма: <b>{data.get('total_price')}$</b>\n\n"
       f"💬 <i>Чек прикреплен выше. Сделайте Reply на этом сообщении, чтобы ответить пользователю.</i>"
   )
