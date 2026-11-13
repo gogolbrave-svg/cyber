@@ -3,6 +3,7 @@ import datetime
 import logging
 import os
 import random
+import sqlite3
 from aiogram import Bot, Dispatcher, F, Router
 from aiogram.filters import Command, CommandStart
 from aiogram.fsm.context import FSMContext
@@ -29,82 +30,95 @@ logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 
+# === ИНИЦИАЛИЗАЦИЯ БАЗЫ ДАННЫХ SQLite ===
+def init_db():
+  conn = sqlite3.connect("bot_database.db")
+  cursor = conn.cursor()
+  cursor.execute(
+      """
+        CREATE TABLE IF NOT EXISTS orders (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            user_id INTEGER,
+            service_name TEXT,
+            total_price REAL,
+            status TEXT,
+            created_at TEXT,
+            target_info TEXT
+        )
+    """
+  )
+  conn.commit()
+  conn.close()
+
+
+def add_order_to_db(
+    user_id: int, service_name: str, total_price: float, status: str, target_info: str
+):
+  conn = sqlite3.connect("bot_database.db")
+  cursor = conn.cursor()
+  date_str = datetime.datetime.now().strftime("%d %B")
+  cursor.execute(
+      """
+        INSERT INTO orders (user_id, service_name, total_price, status, created_at, target_info)
+        VALUES (?, ?, ?, ?, ?, ?)
+    """,
+      (user_id, service_name, total_price, status, date_str, target_info),
+  )
+  conn.commit()
+  order_id = cursor.lastrowid
+  conn.close()
+  return order_id
+
+
+def get_user_orders_from_db(user_id: int):
+  conn = sqlite3.connect("bot_database.db")
+  cursor = conn.cursor()
+  cursor.execute(
+      """
+        SELECT id, service_name, total_price, status, created_at, target_info 
+        FROM orders WHERE user_id = ? ORDER BY id DESC
+    """,
+      (user_id,),
+  )
+  rows = cursor.fetchall()
+  conn.close()
+  orders = []
+  for row in rows:
+    orders.append(
+        {
+            "id": row[0],
+            "service_name": row[1],
+            "total_price": row[2],
+            "status": row[3],
+            "created_at": row[4],
+            "target_info": row[5],
+        }
+    )
+  return orders
+
+
 class OrderForm(StatesGroup):
   service = State()
   target_username = State()
   target_phone = State()
-  receipt = State()  # Состояние для ожидания чека
+  receipt = State()
 
 
 class SupportForm(StatesGroup):
-  reason = State()
-  photo = State()
+  message_text = State()
 
 
-# База данных в памяти для хранения заказов пользователей
-USER_ORDERS = {}
-
-# Словарь для хранения времени последней авто-рассылки пользователям: {user_id: datetime}
+# Словарь для отслеживания активности пользователей для авто-рассылки
 KNOWN_USERS = {}
 
-# Хранилище активных задач таймеров и дожимов для неоплаченных оплат
+# Хранилище активных задач таймеров и дожимов
 PAYMENT_TIMERS = {}
 ABANDONED_CHECKOUTS = {}
 
 router = Router()
 
 
-# === СЛОВАРЬ ВАЛЮТ ДЛЯ СТРАН (ДЛЯ ОЦЕНОК) ===
-COUNTRY_CURRENCIES = {
-    "Украина": {"code": "UAH", "symbol": "грн."},
-    "Россия": {"code": "RUB", "symbol": "₽"},
-    "Беларусь": {"code": "BYN", "symbol": "BYN"},
-    "Казахстан": {"code": "KZT", "symbol": "₸"},
-    "Молдова": {"code": "MDL", "symbol": "лей"},
-    "Узбекистан": {"code": "UZS", "symbol": "сум"},
-    "Кыргызстан": {"code": "KGS", "symbol": "сом"},
-    "Таджикистан": {"code": "TJS", "symbol": "сом."},
-    "Грузия": {"code": "GEL", "symbol": "lari"},
-    "Армения": {"code": "AMD", "symbol": "драм"},
-    "Азербайджан": {"code": "AZN", "symbol": "AZN"},
-}
-
-
-# === ФУНКЦИЯ ПОЛУЧЕНИЯ РЕАЛЬНЫХ КУРСОВ ВАЛЮТ ===
-async def get_exchange_rate(target_currency: str) -> float:
-  """Получает актуальный курс USD к целевой валюте из публичных API."""
-  url = f"https://open.er-api.com/v6/latest/USD"
-  try:
-    async with ClientSession() as session:
-      async with session.get(url, timeout=5) as response:
-        if response.status == 200:
-          data = await response.json()
-          rates = data.get("rates", {})
-          if target_currency in rates:
-            return float(rates[target_currency])
-  except Exception as e:
-    logger.warning(
-        f"Не удалось получить курс для {target_currency}: {e}. Используем"
-        " резервные значения."
-    )
-
-  fallback_rates = {
-      "UAH": 41.5,
-      "RUB": 95.0,
-      "BYN": 3.3,
-      "KZT": 480.0,
-      "MDL": 18.0,
-      "UZS": 12600.0,
-      "KGS": 89.0,
-      "TJS": 10.9,
-      "GEL": 2.7,
-      "AMD": 390.0,
-      "AZN": 1.7,
-  }
-  return fallback_rates.get(target_currency, 1.0)
-
-
-# === ФУНКЦИЯ ГЕНЕРАЦИИ ДИНАМИЧЕСКОЙ ДАТЫ ДЛЯ СКИДКИ ===
+# === ФУНКЦИЯ ГЕНЕРАЦИИ ДИНАМИЧЕСКОЙ ДАТЫ ДЛЯ СКИДКИ (АВТОСООБЩЕНИЕ) ===
 def get_dynamic_discount_content():
   target_date = datetime.date.today() + datetime.timedelta(days=3)
   target_day = target_date.day
@@ -130,7 +144,7 @@ def get_dynamic_discount_content():
   text = (
       "✨ <b>Специальное предложение</b>\n\n"
       f"Напоминаем, что в нашем сервисе действует персональная скидка <b>20%</b>, которая актуальна до <b>{target_day} {month_name}</b>.\n\n"
-      "Будем рады помочь с решением вашей задачи на лучших условиях. Гарантируем аккуратность и конфиденциальность.\n\n"
+      "Будем рады помочь с решением вашей задачи на лучших условиях. Гарантируем конфиденциальность.\n\n"
       "Ждем вас в боте 👇"
   )
 
@@ -181,7 +195,7 @@ async def delayed_abandoned_cart_reminder(bot: Bot, user_id: int):
     if user_id in ABANDONED_CHECKOUTS and ABANDONED_CHECKOUTS[user_id]:
       reminder_text = (
           "👋 <b>Завершить оформление?</b>\n\n"
-          "Мы заметили, что вы остановились на шаге оплаты. Если у вас возникли вопросы по переводу или деталей заказа — наша поддержка всегда на связи.\n\n"
+          "Мы заметили, что вы остановились на шаге оплаты. Если у вас возникли вопросы по переводу — поддержка на связи.\n\n"
           "Вернуться к оформлению можно в один клик 👇"
       )
       keyboard = InlineKeyboardMarkup(
@@ -198,7 +212,7 @@ async def delayed_abandoned_cart_reminder(bot: Bot, user_id: int):
     logger.error(f"Ошибка отправки напоминания о дожиме для {user_id}: {e}")
 
 
-# === ФУНКЦИЯ ЖИВОГО ТАЙМЕРА ОБРАТНОГО ОТСЧЕТА (КАЖДУЮ СЕКУНДУ) ===
+# === ФУНКЦИЯ ЖИВОГО ТАЙМЕРА ОБРАТНОГО ОТСЧЕТА ===
 async def run_payment_timer(bot: Bot, chat_id: int, message_id: int, base_text: str, keyboard_buttons_factory):
   total_seconds = 20 * 60
   task_key = (chat_id, message_id)
@@ -213,7 +227,7 @@ async def run_payment_timer(bot: Bot, chat_id: int, message_id: int, base_text: 
           f"Время на завершение оплаты: <b><u>{timer_str}</u></b>\n\n"
           f"{base_text}"
       )
-      keyboard = keyboard_buttons_factory(timer_active=True, time_left=timer_str)
+      keyboard = keyboard_buttons_factory()
       
       try:
         await bot.edit_message_text(
@@ -254,7 +268,75 @@ async def run_payment_timer(bot: Bot, chat_id: int, message_id: int, base_text: 
     pass
 
 
-# === ФУНКЦИЯ СОЗДАНИЯ ИНВОЙСА CRYPTOBOT ===
+# === ФУНКЦИЯ ДЛЯ ГЕНЕРАЦИИ РЕПУТАЦИИ / О СЕРВИСЕ ===
+def get_reputation_text_and_keyboard():
+  current_date = datetime.date.today()
+  base_date = datetime.date(2026, 1, 1)
+  days_passed = max(0, (current_date - base_date).days)
+
+  completed = min(3752 + days_passed * 25, 20000)
+  rng = random.Random(current_date.toordinal())
+  in_progress = rng.randint(170, 500)
+  new_requests = rng.randint(30, 80)
+
+  text = (
+      "📊 <b>О сервисе и репутации</b>\n\n"
+      f"• Успешно выполнено задач: <b>{completed:,}</b>\n"
+      f"• В активной работе: <b>{in_progress}</b>\n"
+      f"• Новых заявок сегодня: <b>{new_requests}</b>\n\n"
+      "<i>Мы дорожим конфиденциальностью каждого клиента и поддерживаем безупречный уровень сервиса.</i>"
+  )
+  keyboard = InlineKeyboardMarkup(
+      inline_keyboard=[
+          [InlineKeyboardButton(text="🏠 На главную", callback_data="back_home")]
+      ]
+  )
+  return text, keyboard
+
+
+def get_main_menu_text():
+  return (
+      "💻 <b>КИБЕР УСЛУГИ</b>\n"
+      "<i>Цифровые решения и поддержка</i>\n\n"
+      "Добро пожаловать!\n\n"
+      "Здесь вы можете получить помощь с цифровыми вопросами, безопасностью и настройкой аккаунтов."
+  )
+
+
+def get_main_menu_keyboard():
+  return InlineKeyboardMarkup(
+      inline_keyboard=[
+          [
+              InlineKeyboardButton(
+                  text="💻 Каталог услуг", callback_data="catalog_services"
+              )
+          ],
+          [
+              InlineKeyboardButton(
+                  text="📦 Мои заявки", callback_data="my_orders"
+              ),
+              InlineKeyboardButton(
+                  text="📊 О сервисе", callback_data="about_service"
+              ),
+          ],
+          [
+              InlineKeyboardButton(
+                  text="💬 Поддержка", callback_data="contact_admin"
+              )
+          ],
+      ]
+  )
+
+
+def get_back_home_keyboard():
+  return InlineKeyboardMarkup(
+      inline_keyboard=[
+          [InlineKeyboardButton(text="🏠 На главную", callback_data="back_home")]
+      ]
+  )
+
+
+# === СОЗДАНИЕ ИНВОЙСА CRYPTOBOT ===
 async def create_cryptobot_invoice(amount_usd: float, description: str) -> str:
   if not CRYPTO_BOT_TOKEN:
     return ""
@@ -282,68 +364,22 @@ async def create_cryptobot_invoice(amount_usd: float, description: str) -> str:
   return ""
 
 
-# === ФУНКЦИЯ ДЛЯ ГЕНЕРАЦИИ РЕПУТАЦИИ ===
-async def get_reputation_text_and_keyboard():
-  current_date = datetime.date.today()
-  base_date = datetime.date(2026, 1, 1)
-  days_passed = max(0, (current_date - base_date).days)
-
-  completed = min(3752 + days_passed * 25, 20000)
-
-  rng = random.Random(current_date.toordinal())
-  in_progress = rng.randint(170, 500)
-  new_requests = rng.randint(30, 80)
-
-  text = (
-      "📊 <b>Статистика и достижения сервиса</b>\n\n"
-      f"• Успешно выполнено задач: <b>{completed:,}</b>\n"
-      f"• В активной работе: <b>{in_progress}</b>\n"
-      f"• Новых заявок сегодня: <b>{new_requests}</b>\n\n"
-      "<i>Мы дорожим конфиденциальностью каждого клиента и поддерживаем безупречный уровень сервиса.</i>"
-  )
-  keyboard = InlineKeyboardMarkup(
-      inline_keyboard=[
-          [InlineKeyboardButton(text="⬅️ Назад", callback_data="back_home")]
-      ]
-  )
-  return text, keyboard
-
-
-# === ВСПОМОГАТЕЛЬНЫЕ ФУНКЦИИ ДЛЯ ОПИСАНИЯ ЦЕЛИ В ЗАКАЗЕ ===
 def get_order_details_text(data):
   service_name = data.get("service_name")
   target_username = data.get("target_username")
   target_phone = data.get("target_phone")
 
-  if service_name == "Взлом VK":
-    return f"• Номер или ссылка на VK: <b>{target_username}</b>\n"
-  elif service_name == "Взлом Instagram":
-    return f"• Юзер Instagram или ссылка: <b>{target_username}</b>\n"
-  elif service_name == "Взлом TikTok":
-    return f"• Юзер TikTok или ссылка: <b>{target_username}</b>\n"
+  if service_name in ["Взлом VK", "Взлом Instagram", "Взлом TikTok"]:
+    return f"• Цель (Ссылка/Юзер): <b>{target_username}</b>\n"
   else:
     return (
-        f"• Юзер Telegram цели: <b>{target_username}</b>\n"
-        f"• Номер телефона цели: <b>{target_phone}</b>\n"
+        f"• Юзер цели: <b>{target_username}</b>\n"
+        f"• Телефон цели: <b>{target_phone}</b>\n"
     )
 
 
 def get_admin_order_details_text(data):
-  service_name = data.get("service_name")
-  target_username = data.get("target_username")
-  target_phone = data.get("target_phone")
-
-  if service_name == "Взлом VK":
-    return f"• Цель (Номер / ссылка): {target_username}\n"
-  elif service_name == "Взлом Instagram":
-    return f"• Цель (Юзер / ссылка): {target_username}\n"
-  elif service_name == "Взлом TikTok":
-    return f"• Цель (Юзер / ссылка): {target_username}\n"
-  else:
-    return (
-        f"• Юзер цели: {target_username}\n"
-        f"• Телефон цели: {target_phone}\n"
-    )
+  return get_order_details_text(data)
 
 
 # === 0. ГЛАВНОЕ МЕНЮ И КОМАНДЫ ===
@@ -354,174 +390,86 @@ async def cmd_start(message: Message, state: FSMContext):
   if user_id not in KNOWN_USERS:
     KNOWN_USERS[user_id] = datetime.datetime.now()
 
-  keyboard = InlineKeyboardMarkup(
-      inline_keyboard=[
-          [
-              InlineKeyboardButton(
-                  text="🛒 Сделать заказ", callback_data="start_order"
-              )
-          ],
-          [
-              InlineKeyboardButton(
-                  text="📦 Мои заказы", callback_data="my_orders"
-              ),
-              InlineKeyboardButton(
-                  text="📊 Репутация", callback_data="reputation"
-              ),
-          ],
-          [
-              InlineKeyboardButton(
-                  text="💬 Поддержка",
-                  callback_data="contact_admin",
-              )
-          ],
-      ]
+  await message.answer(
+      get_main_menu_text(), reply_markup=get_main_menu_keyboard(), parse_mode="HTML"
   )
-  text = (
-      "<b>Добро пожаловать в «КИБЕР УСЛУГИ»</b> 💻\n\n"
-      "Профессиональное решение ваших цифровых задач: оперативно, надежно и в полной конфиденциальности.\n\n"
-      "Выберите интересующий раздел в меню ниже:"
+
+
+@router.callback_query(F.data == "back_home")
+async def back_home(callback: CallbackQuery, state: FSMContext):
+  user_id = callback.from_user.id
+  task_key = (callback.message.chat.id, callback.message.message_id)
+  if task_key in PAYMENT_TIMERS:
+    PAYMENT_TIMERS[task_key].cancel()
+    del PAYMENT_TIMERS[task_key]
+  ABANDONED_CHECKOUTS.pop(user_id, None)
+
+  await state.clear()
+  await callback.message.edit_text(
+      get_main_menu_text(), reply_markup=get_main_menu_keyboard(), parse_mode="HTML"
   )
-  await message.answer(text, reply_markup=keyboard, parse_mode="HTML")
+  await callback.answer()
 
 
-@router.message(Command("reputation"))
-async def cmd_reputation(message: Message):
-  text, keyboard = await get_reputation_text_and_keyboard()
-  await message.answer(text, reply_markup=keyboard, parse_mode="HTML")
+@router.callback_query(F.data == "about_service")
+async def show_about_service(callback: CallbackQuery):
+  text, keyboard = get_reputation_text_and_keyboard()
+  await callback.message.edit_text(text, reply_markup=keyboard, parse_mode="HTML")
+  await callback.answer()
 
 
-@router.message(Command("my_orders"))
-async def cmd_my_orders(message: Message):
-  user_id = message.from_user.id
-  orders = USER_ORDERS.get(user_id, [])
+@router.callback_query(F.data == "my_orders")
+async def show_my_orders(callback: CallbackQuery):
+  user_id = callback.from_user.id
+  orders = get_user_orders_from_db(user_id)
 
   if not orders:
     text = (
-        "📦 <b>Мои заказы</b>\n\n"
-        "У вас пока нет оформленных заказов. Вы можете создать первый в главном меню."
+        "📦 <b>Мои заявки</b>\n\n"
+        "У вас пока нет оформленных заявок. Вы можете создать первую через Каталог услуг."
     )
   else:
-    text = "📦 <b>История ваших заказов:</b>\n\n"
-    for idx, ord_data in enumerate(orders, 1):
+    text = "📦 <b>Мои заявки:</b>\n\n"
+    for ord_data in orders:
+      status_badge = "На рассмотрении" if "Ожидает" in ord_data["status"] else ord_data["status"]
       text += (
-          f"<b>Заказ #{idx}</b>\n"
-          f"• Услуга: {ord_data['service_name']}\n"
-          f"• Сумма: {ord_data['total_price']}$\n"
+          f"📋 <b>Заявка №{ord_data['id']}</b> — <i>{status_badge}</i>\n"
+          f"📅 Создана: {ord_data['created_at']}\n"
+          f"• Услуга: <b>{ord_data['service_name']}</b>\n"
+          f"• Сумма: <b>{ord_data['total_price']}$</b>\n"
           f"• Статус: {ord_data['status']}\n\n"
       )
+    text += "<i>По вопросам заявки можно обратиться в поддержку.</i>"
 
-  keyboard = InlineKeyboardMarkup(
-      inline_keyboard=[
-          [InlineKeyboardButton(text="🏠 На главную", callback_data="back_home")]
-      ]
+  await callback.message.edit_text(
+      text, reply_markup=get_back_home_keyboard(), parse_mode="HTML"
   )
-  await message.answer(text, reply_markup=keyboard, parse_mode="HTML")
-
-
-@router.message(Command("order", "make_order"))
-async def cmd_order(message: Message, state: FSMContext):
-  await state.clear()
-  await state.set_state(OrderForm.service)
-  keyboard = InlineKeyboardMarkup(
-      inline_keyboard=[
-          [
-              InlineKeyboardButton(
-                  text="💣 Снос Telegram аккаунта — 10$",
-                  callback_data="srv_Снос_Telegram_аккаунта_10",
-              )
-          ],
-          [
-              InlineKeyboardButton(
-                  text="🔍 Доксинг (поиск информации) — 20$",
-                  callback_data="srv_Доксинг_(Поиск_полной_инфо)_20",
-              )
-          ],
-          [
-              InlineKeyboardButton(
-                  text="🔓 Взлом VK — 40$", callback_data="srv_Взлом_VK_40"
-              )
-          ],
-          [
-              InlineKeyboardButton(
-                  text="📸 Взлом Instagram — 60$",
-                  callback_data="srv_Взлом_Instagram_60",
-              )
-          ],
-          [
-              InlineKeyboardButton(
-                  text="🎵 Взлом TikTok — 80$",
-                  callback_data="srv_Взлом_TikTok_80",
-              )
-          ],
-          [
-              InlineKeyboardButton(
-                  text="💬 Взлом Telegram аккаунта — 100$",
-                  callback_data="srv_Взлом_Telegram_аккаунта_100",
-              )
-          ],
-          [InlineKeyboardButton(text="⬅️ Отмена", callback_data="back_home")],
-      ]
-  )
-  await message.answer(
-      "<b>Выбор услуги</b>\n\nВыберите подходящий вариант из списка ниже:",
-      reply_markup=keyboard,
-      parse_mode="HTML",
-  )
-
-
-@router.callback_query(F.data == "reputation")
-async def show_reputation(callback: CallbackQuery):
-  text, keyboard = await get_reputation_text_and_keyboard()
-  await callback.message.edit_text(text, reply_markup=keyboard, parse_mode="HTML")
   await callback.answer()
 
 
+# === ПОДДЕРЖКА ===
 @router.callback_query(F.data == "contact_admin")
 async def contact_admin_info(callback: CallbackQuery, state: FSMContext):
-  await state.set_state(SupportForm.reason)
+  await state.set_state(SupportForm.message_text)
   keyboard = InlineKeyboardMarkup(
       inline_keyboard=[
-          [InlineKeyboardButton(text="⬅️ Отмена", callback_data="back_home")]
+          [InlineKeyboardButton(text="⬅️ Отменить", callback_data="back_home")]
       ]
   )
   text = (
-      "💬 <b>Служба поддержки</b>\n\n"
-      "<b>Шаг 1 из 2: Суть вопроса</b>\n\n"
-      "Опишите вашу ситуацию или задайте вопрос (деликатная деталь, статус платежа и т.д.):"
+      "💬 <b>Поддержка</b>\n\n"
+      "Опишите, с чем нужна помощь.\n"
+      "<i>Фото или скриншот можно прикрепить к сообщению (необязательно).</i>"
   )
   await callback.message.edit_text(text, reply_markup=keyboard, parse_mode="HTML")
   await callback.answer()
 
 
-@router.message(SupportForm.reason, F.text)
-async def process_support_reason(message: Message, state: FSMContext):
-  await state.update_data(reason=message.text.strip())
-  await state.set_state(SupportForm.photo)
-  keyboard = InlineKeyboardMarkup(
-      inline_keyboard=[
-          [
-              InlineKeyboardButton(
-                  text="⏩ Пропустить (без фото)", callback_data="skip_support_photo"
-              )
-          ],
-          [InlineKeyboardButton(text="⬅️ Отмена", callback_data="back_home")],
-      ]
-  )
-  text = (
-      "💬 <b>Служба поддержки</b>\n\n"
-      "<b>Шаг 2 из 2: Дополнительное фото</b>\n\n"
-      "📸 Если у вас есть скриншот или фото для примера, отправьте его в чат, либо нажмите кнопку пропуска:"
-  )
-  await message.answer(text, reply_markup=keyboard, parse_mode="HTML")
-
-
-@router.message(SupportForm.photo, F.photo)
-async def process_support_photo(message: Message, state: FSMContext):
-  photo_id = message.photo[-1].file_id
-  data = await state.get_data()
-  reason = data.get("reason")
+@router.message(SupportForm.message_text)
+async def process_support_message(message: Message, state: FSMContext):
   user = message.from_user
+  text_content = message.text or message.caption or "Без текста"
+  photo_id = message.photo[-1].file_id if message.photo else None
 
   user_info = f"@{user.username}" if user.username else f"ID: {user.id}"
   if user.full_name:
@@ -531,81 +479,31 @@ async def process_support_photo(message: Message, state: FSMContext):
       f"📩 <b>Новое обращение в поддержку</b>\n\n"
       f"• От кого: {user_info}\n"
       f"• User ID: <code>{user.id}</code>\n"
-      f"• Вопрос: {reason}\n\n"
+      f"• Вопрос: {text_content}\n\n"
       f"💬 <i>Для ответа просто сделайте Reply (ответ) на это сообщение.</i>"
   )
 
   if ADMIN_ID:
     try:
-      await message.bot.send_photo(
-          chat_id=ADMIN_ID,
-          photo=photo_id,
-          caption=admin_text,
-          parse_mode="HTML",
-      )
+      if photo_id:
+        await message.bot.send_photo(
+            chat_id=ADMIN_ID, photo=photo_id, caption=admin_text, parse_mode="HTML"
+        )
+      else:
+        await message.bot.send_message(
+            chat_id=ADMIN_ID, text=admin_text, parse_mode="HTML"
+        )
     except Exception as e:
       logger.error(f"Не удалось отправить обращение админу: {e}")
 
   success_text = (
-      "✅ <b>Обращение отправлено</b>\n\n"
-      "Специалист поддержки изучит ваш вопрос и свяжется с вами в ближайшее время."
+      "✅ <b>Мы получили ваше обращение</b>\n\n"
+      "Специалист ответит вам в ближайшее время."
   )
-  keyboard = InlineKeyboardMarkup(
-      inline_keyboard=[
-          [InlineKeyboardButton(text="🏠 На главную", callback_data="back_home")]
-      ]
-  )
-  await message.answer(success_text, reply_markup=keyboard, parse_mode="HTML")
-  await state.clear()
-
-
-@router.callback_query(SupportForm.photo, F.data == "skip_support_photo")
-async def skip_support_photo(callback: CallbackQuery, state: FSMContext):
-  data = await state.get_data()
-  reason = data.get("reason")
-  user = callback.from_user
-
-  user_info = f"@{user.username}" if user.username else f"ID: {user.id}"
-  if user.full_name:
-    user_info = f"{user.full_name} ({user_info})"
-
-  admin_text = (
-      f"📩 <b>Новое обращение в поддержку</b>\n\n"
-      f"• От кого: {user_info}\n"
-      f"• User ID: <code>{user.id}</code>\n"
-      f"• Вопрос: {reason}\n\n"
-      f"💬 <i>Для ответа просто сделайте Reply (ответ) на это сообщение.</i>"
-  )
-
-  if ADMIN_ID:
-    try:
-      await callback.bot.send_message(
-          chat_id=ADMIN_ID, text=admin_text, parse_mode="HTML"
-      )
-    except Exception as e:
-      logger.error(f"Не удалось отправить обращение админу: {e}")
-
-  success_text = (
-      "✅ <b>Обращение отправлено</b>\n\n"
-      "Специалист поддержки изучит ваш вопрос и свяжется с вами в ближайшее время."
-  )
-  keyboard = InlineKeyboardMarkup(
-      inline_keyboard=[
-          [InlineKeyboardButton(text="🏠 На главную", callback_data="back_home")]
-      ]
-  )
-  await callback.message.edit_text(
-      success_text, reply_markup=keyboard, parse_mode="HTML"
-  )
-  await state.clear()
-  await callback.answer()
-
-
-@router.message(SupportForm.photo, ~F.photo)
-async def process_support_photo_invalid(message: Message):
   await message.answer(
-      "📎 Пожалуйста, отправьте <b>изображение (картинкой)</b> либо нажмите кнопку «Пропустить»."
+      success_text, reply_markup=get_back_home_keyboard(), parse_mode="HTML"
   )
+  await state.clear()
 
 
 # === АДМИН-ПАНЕЛЬ: ОТВЕТ ПОЛЬЗОВАТЕЛЮ ЧЕРЕЗ REPLY ===
@@ -654,37 +552,11 @@ async def admin_reply_handler(message: Message):
     await message.reply(f"❌ Не удалось отправить сообщение: {e}")
 
 
-@router.callback_query(F.data == "my_orders")
-async def show_my_orders(callback: CallbackQuery):
-  user_id = callback.from_user.id
-  orders = USER_ORDERS.get(user_id, [])
-
-  if not orders:
-    text = (
-        "📦 <b>Мои заказы</b>\n\n"
-        "У вас пока нет активных или завершенных заказов."
-    )
-  else:
-    text = "📦 <b>История ваших заказов:</b>\n\n"
-    for idx, ord_data in enumerate(orders, 1):
-      text += (
-          f"<b>Заказ #{idx}</b>\n"
-          f"• Услуга: {ord_data['service_name']}\n"
-          f"• Сумма: {ord_data['total_price']}$\n"
-          f"• Статус: {ord_data['status']}\n\n"
-      )
-
-  keyboard = InlineKeyboardMarkup(
-      inline_keyboard=[
-          [InlineKeyboardButton(text="⬅️ Назад", callback_data="back_home")]
-      ]
-  )
-  await callback.message.edit_text(text, reply_markup=keyboard, parse_mode="HTML")
-  await callback.answer()
-
-
-@router.callback_query(F.data == "back_home")
-async def back_home(callback: CallbackQuery, state: FSMContext):
+# === КАТАЛОГ УСЛУГ И ОФОРМЛЕНИЕ ЗАКАЗА ===
+@router.callback_query(
+    F.data.in_(["catalog_services", "start_order"])
+)
+async def process_catalog_services(callback: CallbackQuery, state: FSMContext):
   user_id = callback.from_user.id
   task_key = (callback.message.chat.id, callback.message.message_id)
   if task_key in PAYMENT_TIMERS:
@@ -693,47 +565,6 @@ async def back_home(callback: CallbackQuery, state: FSMContext):
   ABANDONED_CHECKOUTS.pop(user_id, None)
 
   await state.clear()
-  keyboard = InlineKeyboardMarkup(
-      inline_keyboard=[
-          [
-              InlineKeyboardButton(
-                  text="🛒 Сделать заказ", callback_data="start_order"
-              )
-          ],
-          [
-              InlineKeyboardButton(
-                  text="📦 Мои заказы", callback_data="my_orders"
-              ),
-              InlineKeyboardButton(
-                  text="📊 Репутация", callback_data="reputation"
-              ),
-          ],
-          [
-              InlineKeyboardButton(
-                  text="💬 Поддержка",
-                  callback_data="contact_admin",
-              )
-          ],
-      ]
-  )
-  text = (
-      "<b>Добро пожаловать в «КИБЕР УСЛУГИ»</b> 💻\n\n"
-      "Профессиональное решение ваших цифровых задач: оперативно, надежно и в полной конфиденциальности.\n\n"
-      "Выберите интересующий раздел в меню ниже:"
-  )
-  await callback.message.edit_text(text, reply_markup=keyboard, parse_mode="HTML")
-  await callback.answer()
-
-
-@router.callback_query(F.data == "start_order")
-async def process_start_order(callback: CallbackQuery, state: FSMContext):
-  user_id = callback.from_user.id
-  task_key = (callback.message.chat.id, callback.message.message_id)
-  if task_key in PAYMENT_TIMERS:
-    PAYMENT_TIMERS[task_key].cancel()
-    del PAYMENT_TIMERS[task_key]
-  ABANDONED_CHECKOUTS.pop(user_id, None)
-
   await state.set_state(OrderForm.service)
   keyboard = InlineKeyboardMarkup(
       inline_keyboard=[
@@ -772,11 +603,11 @@ async def process_start_order(callback: CallbackQuery, state: FSMContext):
                   callback_data="srv_Взлом_Telegram_аккаунта_100",
               )
           ],
-          [InlineKeyboardButton(text="⬅️ Отмена", callback_data="back_home")],
+          [InlineKeyboardButton(text="🏠 На главную", callback_data="back_home")],
       ]
   )
   await callback.message.edit_text(
-      "<b>Выбор услуги</b>\n\nВыберите подходящий вариант из списка ниже:",
+      "💻 <b>Каталог услуг</b>\n\nВыберите подходящий вариант из списка ниже:",
       reply_markup=keyboard,
       parse_mode="HTML",
   )
@@ -794,28 +625,14 @@ async def process_service(callback: CallbackQuery, state: FSMContext):
   )
   await state.set_state(OrderForm.target_username)
 
-  if service_name == "Взлом VK":
+  if service_name in ["Взлом VK", "Взлом Instagram", "Взлом TikTok"]:
     prompt_text = (
-        f"<b>Шаг 1 из 1: Номер или ссылка на VK</b>\n\n"
-        f"Выбрано: <b>{service_name}</b> ({price}$)\n\n"
-        "Введите номер или ссылку на VK:"
-    )
-  elif service_name == "Взлом Instagram":
-    prompt_text = (
-        f"<b>Шаг 1 из 1: Юзер Instagram или ссылка</b>\n\n"
-        f"Выбрано: <b>{service_name}</b> ({price}$)\n\n"
-        "Введите юзер инстаграм или ссылку:"
-    )
-  elif service_name == "Взлом TikTok":
-    prompt_text = (
-        f"<b>Шаг 1 из 1: Юзер TikTok или ссылка</b>\n\n"
-        f"Выбрано: <b>{service_name}</b> ({price}$)\n\n"
-        "Введите юзер тик ток или ссылку:"
+        f"<b>Услуга: {service_name} ({price}$)</b>\n\n"
+        "Введите номер или ссылку на профиль цели:"
     )
   else:
     prompt_text = (
-        f"<b>Шаг 1 из 2: Юзер Telegram аккаунта цели</b>\n\n"
-        f"Выбрано: <b>{service_name}</b> ({price}$)\n\n"
+        f"<b>Услуга: {service_name} ({price}$)</b>\n\n"
         "Введите юзернейм Telegram аккаунта цели (например, @username):"
     )
 
@@ -836,7 +653,7 @@ async def process_target_username(message: Message, state: FSMContext):
     total_price = data.get("total_price", 0)
 
     summary_text = (
-        "✨ <b>Анкета успешно сформирована</b>\n\n"
+        "✨ <b>Заявка готова</b>\n\n"
         "📋 <b>Детали вашего заказа:</b>\n"
         f"• Услуга: <b>{service_name}</b>\n"
         f"{get_order_details_text(data)}"
@@ -849,12 +666,10 @@ async def process_target_username(message: Message, state: FSMContext):
             [InlineKeyboardButton(text="💳 Перейти к оплате", callback_data="go_to_payment")]
         ]
     )
-
     await message.answer(summary_text, reply_markup=keyboard, parse_mode="HTML")
   else:
     await state.set_state(OrderForm.target_phone)
     await message.answer(
-        "<b>Шаг 2 из 2: Номер телефона цели</b>\n\n"
         "Введите номер телефона цели (или укажите '-', если неизвестен):",
         parse_mode="HTML",
     )
@@ -869,7 +684,7 @@ async def process_target_phone(message: Message, state: FSMContext):
   total_price = data.get("total_price", 0)
 
   summary_text = (
-      "✨ <b>Анкета успешно сформирована</b>\n\n"
+      "✨ <b>Заявка готова</b>\n\n"
       "📋 <b>Детали вашего заказа:</b>\n"
       f"• Услуга: <b>{service_name}</b>\n"
       f"{get_order_details_text(data)}"
@@ -882,11 +697,10 @@ async def process_target_phone(message: Message, state: FSMContext):
           [InlineKeyboardButton(text="💳 Перейти к оплате", callback_data="go_to_payment")]
       ]
   )
-
   await message.answer(summary_text, reply_markup=keyboard, parse_mode="HTML")
 
 
-# === ПЕРЕХОД К ВЫБОРУ ОПЛАТЫ ===
+# === ВЫБОР ОПЛАТЫ С ТАЙМЕРОМ ===
 @router.callback_query(F.data == "go_to_payment")
 async def process_go_to_payment(callback: CallbackQuery, state: FSMContext):
   user_id = callback.from_user.id
@@ -901,12 +715,12 @@ async def process_go_to_payment(callback: CallbackQuery, state: FSMContext):
   total_price = data.get("total_price", 10)
 
   base_text = (
-      "💳 <b>ВЫБОР СПОСОБА ОПЛАТЫ</b>\n\n"
+      "💳 <b>Способ оплаты</b>\n\n"
       f"• Сумма к зачислению: <b>{total_price}$ USDT</b>\n\n"
       "Выберите наиболее удобный вариант из списка ниже:\n"
   )
 
-  def get_payment_keyboard(timer_active=False, time_left="20:00"):
+  def get_payment_keyboard():
     return InlineKeyboardMarkup(
         inline_keyboard=[
             [
@@ -932,7 +746,7 @@ async def process_go_to_payment(callback: CallbackQuery, state: FSMContext):
                     text="💬 Нужна помощь с оплатой",
                     callback_data="payment_help_manager",
                 )
-            ]
+            ],
         ]
     )
 
@@ -978,7 +792,6 @@ async def process_payment_help_manager(callback: CallbackQuery):
   )
 
 
-# === МИНИГАЙД ПО ПОКУПКЕ КРИПТЫ ЧЕРЕЗ P2P ===
 @router.callback_query(F.data == "cryptobot_guide")
 async def process_cryptobot_guide(callback: CallbackQuery):
   chat_id = callback.message.chat.id
@@ -990,13 +803,12 @@ async def process_cryptobot_guide(callback: CallbackQuery):
 
   guide_text = (
       "📖 <b>Минигайд: как оплатить через CryptoBot</b>\n\n"
-      "Если у вас нет готовой криптовалюты, вы можете легко приобрести её с банковской карты (СБП, RUB, BYN, KZT и др.) за пару минут:\n\n"
+      "Если у вас нет готовой криптовалюты, вы можете легко приобрести её с банковской карты за пару минут:\n\n"
       "1. Откройте официальный бот <b>@CryptoBot</b>.\n"
       "2. Перейдите в раздел <b>«Кошелек» ➔ «P2P»</b>.\n"
-      "3. Выберите покупку USDT за вашу привычную валюту с помощью карты.\n"
-      "4. После завершения сделки USDT поступят на ваш баланс в боте.\n"
-      "5. Вернитесь сюда, нажмите <b>CryptoBot</b> и подтвердите платеж без комиссий.\n\n"
-      "Быстро, безопасно и полностью конфиденциально."
+      "3. Выберите покупку USDT за вашу валюту.\n"
+      "4. После завершения сделки USDT поступят на ваш баланс.\n"
+      "5. Вернитесь сюда, нажмите <b>CryptoBot</b> и подтвердите платеж без комиссий."
   )
   keyboard = InlineKeyboardMarkup(
       inline_keyboard=[
@@ -1007,12 +819,7 @@ async def process_cryptobot_guide(callback: CallbackQuery):
   await callback.answer()
 
 
-@router.callback_query(F.data == "noop")
-async def process_noop(callback: CallbackQuery):
-  await callback.answer("", show_alert=False)
-
-
-# === ОБРАБОТКА ОПЛАТЫ ЧЕРЕЗ CRYPTOBOT ===
+# === ОПЛАТА CRYPTOBOT ===
 @router.callback_query(F.data == "pay_cryptobot")
 async def process_pay_cryptobot(callback: CallbackQuery, state: FSMContext):
   user_id = callback.from_user.id
@@ -1028,9 +835,7 @@ async def process_pay_cryptobot(callback: CallbackQuery, state: FSMContext):
   data = await state.get_data()
   total_price = data.get("total_price", 10)
 
-  pay_url = await create_cryptobot_invoice(
-      total_price, "Оплата киберуслуг"
-  )
+  pay_url = await create_cryptobot_invoice(total_price, "Оплата киберуслуг")
   if not pay_url:
     await callback.answer(
         "❌ Сервис временно недоступен. Обратитесь в поддержку.",
@@ -1068,14 +873,11 @@ async def process_cryptobot_check(callback: CallbackQuery, state: FSMContext):
   user = callback.from_user
   data = await state.get_data()
 
-  order_info = {
-      "service_name": data.get("service_name"),
-      "total_price": data.get("total_price"),
-      "status": "⏳ Ожидает проверки платежа CryptoBot",
-  }
-  if user.id not in USER_ORDERS:
-    USER_ORDERS[user.id] = []
-  USER_ORDERS[user.id].append(order_info)
+  service_name = data.get("service_name", "Услуга")
+  total_price = data.get("total_price", 10)
+  target_info = f"Юзер: {data.get('target_username')}, Тел: {data.get('target_phone')}"
+
+  add_order_to_db(user.id, service_name, total_price, "⏳ Платёж проверяется (CryptoBot)", target_info)
 
   user_info = f"@{user.username}" if user.username else f"ID: {user.id}"
   if user.full_name:
@@ -1085,10 +887,10 @@ async def process_cryptobot_check(callback: CallbackQuery, state: FSMContext):
       f"🤖 <b>Новый платеж через CryptoBot</b>\n\n"
       f"• От кого: {user_info}\n"
       f"• User ID: <code>{user.id}</code>\n"
-      f"• Услуга: <b>{data.get('service_name')}</b>\n"
+      f"• Услуга: <b>{service_name}</b>\n"
       f"{get_admin_order_details_text(data)}"
-      f"• Сумма: <b>{data.get('total_price')}$</b>\n\n"
-      f"💬 <i>Оплачено через CryptoBot. Проверьте поступление в боте. Сделайте Reply на это сообщение для ответа.</i>"
+      f"• Сумма: <b>{total_price}$</b>\n\n"
+      f"💬 <i>Оплачено через CryptoBot. Сделайте Reply для ответа.</i>"
   )
   if ADMIN_ID:
     try:
@@ -1099,21 +901,18 @@ async def process_cryptobot_check(callback: CallbackQuery, state: FSMContext):
       logger.error(f"Не удалось отправить уведомление админу: {e}")
 
   final_text = (
-      "✅ <b>Платеж принят в обработку</b>\n\n"
+      "⏳ <b>Платёж проверяется</b>\n\n"
       "Система проверяет зачисление средств. Модератор подтвердит заявку в течение <b>25 минут</b>."
   )
-  keyboard = InlineKeyboardMarkup(
-      inline_keyboard=[
-          [InlineKeyboardButton(text="🏠 На главную", callback_data="back_home")]
-      ]
+  await callback.message.edit_text(
+      final_text, reply_markup=get_back_home_keyboard(), parse_mode="HTML"
   )
-  await callback.message.edit_text(final_text, reply_markup=keyboard, parse_mode="HTML")
   await state.clear()
 
 
-# === ВЫБОР СПОСОБА ОПЛАТЫ (BEP-20 / TON / TRC-20 / BTC) ===
+# === ВЫБОР СЕТИ КРИПТОВАЛЮТЫ ===
 @router.callback_query(F.data == "crypto_expert")
-async def process_crypto_expert(callback: CallbackQuery, state: FSMContext):
+async def process_crypto_expert(callback: CallbackQuery):
   user_id = callback.from_user.id
   chat_id = callback.message.chat.id
   message_id = callback.message.message_id
@@ -1125,57 +924,41 @@ async def process_crypto_expert(callback: CallbackQuery, state: FSMContext):
   ABANDONED_CHECKOUTS.pop(user_id, None)
 
   text = (
-      "🪙 <b>ВЫБОР СЕТИ / КРИПТОВАЛЮТЫ</b>\n\n"
+      "🪙 <b>Выбор сети / криптовалюты</b>\n\n"
       "Выберите подходящую сеть для перевода средств:"
   )
-
   keyboard = InlineKeyboardMarkup(
       inline_keyboard=[
-          [
-              InlineKeyboardButton(
-                  text="🔴 USDT (TRC-20)", callback_data="pay_trc20"
-              )
-          ],
-          [
-              InlineKeyboardButton(
-                  text="🟢 USDT (BEP-20)", callback_data="pay_bep20"
-              )
-          ],
-          [
-              InlineKeyboardButton(
-                  text="🔵 TON", callback_data="pay_ton"
-              )
-          ],
-          [
-              InlineKeyboardButton(
-                  text="🟠 Bitcoin (BTC)", callback_data="pay_btc"
-              )
-          ],
-          [
-              InlineKeyboardButton(
-                  text="⬅️ Назад", callback_data="go_to_payment"
-              )
-          ],
+          [InlineKeyboardButton(text="🔴 USDT (TRC-20)", callback_data="pay_trc20")],
+          [InlineKeyboardButton(text="🟢 USDT (BEP-20)", callback_data="pay_bep20")],
+          [InlineKeyboardButton(text="🔵 TON", callback_data="pay_ton")],
+          [InlineKeyboardButton(text="🟠 Bitcoin (BTC)", callback_data="pay_btc")],
+          [InlineKeyboardButton(text="⬅️ Назад", callback_data="go_to_payment")],
       ]
   )
-
   await callback.message.edit_text(text, reply_markup=keyboard, parse_mode="HTML")
   await callback.answer()
 
 
-# === ОПЛАТА TRC-20 ===
-@router.callback_query(F.data == "pay_trc20")
-async def process_pay_trc20(callback: CallbackQuery, state: FSMContext):
+@router.callback_query(F.data.in_(["pay_trc20", "pay_bep20", "pay_ton", "pay_btc"]))
+async def process_crypto_wallet(callback: CallbackQuery, state: FSMContext):
   data = await state.get_data()
   total_price = data.get("total_price", 10)
 
+  wallets = {
+      "pay_trc20": ("USDT (TRC-20)", "TYd1ekJgTHnFfgAVYXsi7689GaG5oZN3Xe"),
+      "pay_bep20": ("USDT (BEP-20)", "0x0A6C6634f8FD920a5E9E0d241CD46d6C15377f39"),
+      "pay_ton": ("TON", "UQDwk7PZoWr0zHv-BItBEGxnq4uyj81z6BlIw74heDgF-Shd"),
+      "pay_btc": ("Bitcoin (BTC)", "bc1qj7xy0645vcza7l3et5s8nuahllua9a439c0795"),
+  }
+
+  net_name, address = wallets.get(callback.data)
+
   payment_text = (
-      "💳 <b>ОПЛАТА USDT (TRC-20)</b>\n\n"
+      f"💳 <b>Оплата {net_name}</b>\n\n"
       f"• Сумма: <b>{total_price}$</b>\n"
-      "• Сеть: <b>TRC-20</b>\n"
-      "• Реквизиты:\n"
-      "<code>TYd1ekJgTHnFfgAVYXsi7689GaG5oZN3Xe</code>\n\n"
-      "💡 <i>Переведите точную сумму. После завершения перевода нажмите кнопку отправки чека.</i>"
+      f"• Реквизиты:\n<code>{address}</code>\n\n"
+      "💡 <i>Переведите точную сумму. После перевода нажмите кнопку ниже.</i>"
   )
 
   keyboard = InlineKeyboardMarkup(
@@ -1186,136 +969,13 @@ async def process_pay_trc20(callback: CallbackQuery, state: FSMContext):
                   callback_data="ask_for_receipt",
               )
           ],
-          [
-              InlineKeyboardButton(
-                  text="⬅️ Назад",
-                  callback_data="crypto_expert",
-              )
-          ],
+          [InlineKeyboardButton(text="⬅️ Назад", callback_data="crypto_expert")],
       ]
   )
-
-  await callback.message.edit_text(
-      payment_text, reply_markup=keyboard, parse_mode="HTML"
-  )
+  await callback.message.edit_text(payment_text, reply_markup=keyboard, parse_mode="HTML")
   await callback.answer()
 
 
-# === ОПЛАТА BEP-20 ===
-@router.callback_query(F.data == "pay_bep20")
-async def process_pay_bep20(callback: CallbackQuery, state: FSMContext):
-  data = await state.get_data()
-  total_price = data.get("total_price", 10)
-
-  payment_text = (
-      "💳 <b>ОПЛАТА USDT (BEP-20)</b>\n\n"
-      f"• Сумма: <b>{total_price}$</b>\n"
-      "• Сеть: <b>BEP-20</b>\n"
-      "• Реквизиты:\n"
-      "<code>0x0A6C6634f8FD920a5E9E0d241CD46d6C15377f39</code>\n\n"
-      "💡 <i>Переведите точную сумму. После завершения перевода нажмите кнопку отправки чека.</i>"
-  )
-
-  keyboard = InlineKeyboardMarkup(
-      inline_keyboard=[
-          [
-              InlineKeyboardButton(
-                  text="✅ Я оплатил(-а), прикрепить чек",
-                  callback_data="ask_for_receipt",
-              )
-          ],
-          [
-              InlineKeyboardButton(
-                  text="⬅️ Назад",
-                  callback_data="crypto_expert",
-              )
-          ],
-      ]
-  )
-
-  await callback.message.edit_text(
-      payment_text, reply_markup=keyboard, parse_mode="HTML"
-  )
-  await callback.answer()
-
-
-# === ОПЛАТА TON ===
-@router.callback_query(F.data == "pay_ton")
-async def process_pay_ton(callback: CallbackQuery, state: FSMContext):
-  data = await state.get_data()
-  total_price = data.get("total_price", 10)
-
-  payment_text = (
-      "💳 <b>ОПЛАТА TON</b>\n\n"
-      f"• Сумма: <b>{total_price}$</b>\n"
-      "• Сеть: <b>TON</b>\n"
-      "• Реквизиты:\n"
-      "<code>UQDwk7PZoWr0zHv-BItBEGxnq4uyj81z6BlIw74heDgF-Shd</code>\n\n"
-      "💡 <i>Переведите точную сумму. После завершения перевода нажмите кнопку отправки чека.</i>"
-  )
-
-  keyboard = InlineKeyboardMarkup(
-      inline_keyboard=[
-          [
-              InlineKeyboardButton(
-                  text="✅ Я оплатил(-а), прикрепить чек",
-                  callback_data="ask_for_receipt",
-              )
-          ],
-          [
-              InlineKeyboardButton(
-                  text="⬅️ Назад",
-                  callback_data="crypto_expert",
-              )
-          ],
-      ]
-  )
-
-  await callback.message.edit_text(
-      payment_text, reply_markup=keyboard, parse_mode="HTML"
-  )
-  await callback.answer()
-
-
-# === ОПЛАТА BITCOIN (BTC) ===
-@router.callback_query(F.data == "pay_btc")
-async def process_pay_btc(callback: CallbackQuery, state: FSMContext):
-  data = await state.get_data()
-  total_price = data.get("total_price", 10)
-
-  payment_text = (
-      "💳 <b>ОПЛАТА BITCOIN (BTC)</b>\n\n"
-      f"• Сумма: <b>{total_price}$</b>\n"
-      "• Сеть: <b>Bitcoin</b>\n"
-      "• Реквизиты:\n"
-      "<code>bc1qj7xy0645vcza7l3et5s8nuahllua9a439c0795</code>\n\n"
-      "💡 <i>Переведите точную сумму. После завершения перевода нажмите кнопку отправки чека.</i>"
-  )
-
-  keyboard = InlineKeyboardMarkup(
-      inline_keyboard=[
-          [
-              InlineKeyboardButton(
-                  text="✅ Я оплатил(-а), прикрепить чек",
-                  callback_data="ask_for_receipt",
-              )
-          ],
-          [
-              InlineKeyboardButton(
-                  text="⬅️ Назад",
-                  callback_data="crypto_expert",
-              )
-          ],
-      ]
-  )
-
-  await callback.message.edit_text(
-      payment_text, reply_markup=keyboard, parse_mode="HTML"
-  )
-  await callback.answer()
-
-
-# === ЗАПРОС ЧЕКА У ПОЛЬЗОВАТЕЛЯ ===
 @router.callback_query(F.data == "ask_for_receipt")
 async def ask_for_receipt(callback: CallbackQuery, state: FSMContext):
   await state.set_state(OrderForm.receipt)
@@ -1327,24 +987,16 @@ async def ask_for_receipt(callback: CallbackQuery, state: FSMContext):
   await callback.answer()
 
 
-# === ПОЛУЧЕНИЕ ЧЕКА И СОХРАНЕНИЕ ===
 @router.message(OrderForm.receipt, F.photo)
 async def process_receipt_photo(message: Message, state: FSMContext):
   user = message.from_user
-  user_id = user.id
-  ABANDONED_CHECKOUTS.pop(user_id, None)
-
   data = await state.get_data()
 
-  order_info = {
-      "service_name": data.get("service_name"),
-      "total_price": data.get("total_price"),
-      "status": "⏳ Ожидает проверки оплаты",
-  }
+  service_name = data.get("service_name", "Услуга")
+  total_price = data.get("total_price", 10)
+  target_info = f"Юзер: {data.get('target_username')}, Тел: {data.get('target_phone')}"
 
-  if user_id not in USER_ORDERS:
-    USER_ORDERS[user_id] = []
-  USER_ORDERS[user_id].append(order_info)
+  add_order_to_db(user.id, service_name, total_price, "⏳ Платёж проверяется", target_info)
 
   user_info = f"@{user.username}" if user.username else f"ID: {user.id}"
   if user.full_name:
@@ -1354,10 +1006,10 @@ async def process_receipt_photo(message: Message, state: FSMContext):
       f"🛒 <b>Новая заявка с чеком</b>\n\n"
       f"• От кого: {user_info}\n"
       f"• User ID: <code>{user.id}</code>\n"
-      f"• Услуга: <b>{data.get('service_name')}</b>\n"
+      f"• Услуга: <b>{service_name}</b>\n"
       f"{get_admin_order_details_text(data)}"
-      f"• Сумма: <b>{data.get('total_price')}$</b>\n\n"
-      f"💬 <i>Чек прикреплен выше. Сделайте Reply на этом сообщении, чтобы ответить пользователю.</i>"
+      f"• Сумма: <b>{total_price}$</b>\n\n"
+      f"💬 <i>Чек прикреплен выше. Сделайте Reply для ответа.</i>"
   )
   if ADMIN_ID:
     try:
@@ -1372,21 +1024,12 @@ async def process_receipt_photo(message: Message, state: FSMContext):
       logger.error(f"Не удалось отправить заказ админу: {e}")
 
   final_text = (
-      "✅ <b>Заявка и чек успешно получены</b>\n\n"
+      "⏳ <b>Платёж проверяется</b>\n\n"
       "Администратор проверяет платеж. Мы свяжемся с вами в течение <b>25 минут</b>."
   )
-
-  keyboard = InlineKeyboardMarkup(
-      inline_keyboard=[
-          [
-              InlineKeyboardButton(
-                  text="🏠 На главную", callback_data="back_home"
-              )
-          ]
-      ]
+  await message.answer(
+      final_text, reply_markup=get_back_home_keyboard(), parse_mode="HTML"
   )
-
-  await message.answer(final_text, reply_markup=keyboard, parse_mode="HTML")
   await state.clear()
 
 
@@ -1397,7 +1040,7 @@ async def process_receipt_invalid(message: Message):
   )
 
 
-# === ВЕБ-СЕРВЕР ДЛЯ ЗАЩИТЫ ОТ СНА СЕРВЕРА (RENDER) ===
+# === ВЕБ-СЕРВЕР ДЛЯ RENDER ===
 async def handle_ping(request):
   return web.Response(text="Bot is running!")
 
@@ -1413,13 +1056,14 @@ async def start_web_server():
 
 
 async def main():
+  init_db()
   bot = Bot(token=BOT_TOKEN)
   dp = Dispatcher()
   dp.include_router(router)
-  
+
   asyncio.create_task(start_web_server())
   asyncio.create_task(scheduled_broadcast(bot))
-  
+
   await bot.delete_webhook(drop_pending_updates=True)
   await dp.start_polling(bot)
 
