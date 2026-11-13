@@ -153,7 +153,7 @@ def get_dynamic_discount_content():
           [
               InlineKeyboardButton(
                   text="✨ Оформить со скидкой 20%",
-                  callback_data="start_order",
+                  callback_data="catalog_services",
               )
           ],
           [
@@ -200,7 +200,7 @@ async def delayed_abandoned_cart_reminder(bot: Bot, user_id: int):
       )
       keyboard = InlineKeyboardMarkup(
           inline_keyboard=[
-              [InlineKeyboardButton(text="🛒 Вернуться к заказу", callback_data="start_order")],
+              [InlineKeyboardButton(text="🛒 Вернуться к заказу", callback_data="catalog_services")],
               [InlineKeyboardButton(text="💬 Написать в поддержку", callback_data="contact_admin")]
           ]
       )
@@ -248,7 +248,7 @@ async def run_payment_timer(bot: Bot, chat_id: int, message_id: int, base_text: 
         "Срок резерва по заказу завершился. Вы можете повторить оформление в пару кликов."
     )
     expired_kb = InlineKeyboardMarkup(
-        inline_keyboard=[[InlineKeyboardButton(text="🛒 Сделать новый заказ", callback_data="start_order")]]
+        inline_keyboard=[[InlineKeyboardButton(text="🛒 Сделать новый заказ", callback_data="catalog_services")]]
     )
     try:
       await bot.edit_message_text(
@@ -294,12 +294,12 @@ def get_reputation_text_and_keyboard():
   return text, keyboard
 
 
+# === ЛЕГКОЕ И КРАСИВОЕ ГЛАВНОЕ МЕНЮ ===
 def get_main_menu_text():
   return (
-      "💻 <b>КИБЕР УСЛУГИ</b>\n"
-      "<i>Цифровые решения и поддержка</i>\n\n"
+      "🏆 <b>КИБЕР СЕРВИС</b>\n\n"
       "Добро пожаловать!\n\n"
-      "Здесь вы можете получить помощь с цифровыми вопросами, безопасностью и настройкой аккаунтов."
+      "Выберите нужный раздел. Если возникнут вопросы — наша поддержка поможет разобраться."
   )
 
 
@@ -308,7 +308,7 @@ def get_main_menu_keyboard():
       inline_keyboard=[
           [
               InlineKeyboardButton(
-                  text="💻 Каталог услуг", callback_data="catalog_services"
+                  text="🛒 Каталог", callback_data="catalog_services"
               )
           ],
           [
@@ -426,7 +426,7 @@ async def show_my_orders(callback: CallbackQuery):
   if not orders:
     text = (
         "📦 <b>Мои заявки</b>\n\n"
-        "У вас пока нет оформленных заявок. Вы можете создать первую через Каталог услуг."
+        "У вас пока нет оформленных заявок. Вы можете создать первую через Каталог."
     )
   else:
     text = "📦 <b>Мои заявки:</b>\n\n"
