@@ -345,7 +345,14 @@ def get_order_details_text(data):
   target_username = data.get("target_username")
   target_phone = data.get("target_phone")
 
-  if service_name in ["Взлом VK", "Взлом Instagram", "Взлом TikTok"]:
+  if service_name in [
+      "Взлом VK",
+      "Взлом Instagram",
+      "Взлом TikTok",
+      "Снос Telegram аккаунта",
+      "Доксинг (Поиск полной инфо)",
+      "Взлом Telegram аккаунта",
+  ]:
     return f"• Цель (Ссылка/Юзер): <b>{target_username}</b>\n"
   else:
     return (
@@ -534,7 +541,14 @@ async def process_service(callback: CallbackQuery, state: FSMContext):
   await state.update_data(service_name=service_name, service_price=price, total_price=price)
   await state.set_state(OrderForm.target_username)
 
-  if service_name in ["Взлом VK", "Взлом Instagram", "Взлом TikTok"]:
+  if service_name in [
+      "Взлом VK",
+      "Взлом Instagram",
+      "Взлом TikTok",
+      "Снос Telegram аккаунта",
+      "Доксинг (Поиск полной инфо)",
+      "Взлом Telegram аккаунта",
+  ]:
     prompt_text = f"<b>Услуга: {service_name} ({price}$)</b>\n\nВведите номер или ссылку на профиль цели:"
   else:
     prompt_text = f"<b>Услуга: {service_name} ({price}$)</b>\n\nВведите юзернейм Telegram аккаунта цели (например, @username):"
@@ -550,7 +564,14 @@ async def process_target_username(message: Message, state: FSMContext):
   data = await state.get_data()
   service_name = data.get("service_name")
 
-  if service_name in ["Взлом VK", "Взлом Instagram", "Взлом TikTok"]:
+  if service_name in [
+      "Взлом VK",
+      "Взлом Instagram",
+      "Взлом TikTok",
+      "Снос Telegram аккаунта",
+      "Доксинг (Поиск полной инфо)",
+      "Взлом Telegram аккаунта",
+  ]:
     await state.update_data(target_phone="-")
     data = await state.get_data()
     total_price = data.get("total_price", 0)
