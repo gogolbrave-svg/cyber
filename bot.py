@@ -48,6 +48,13 @@ def init_db():
         )
     """
   )
+  cursor.execute(
+      """
+        CREATE TABLE IF NOT EXISTS banned_users (
+            user_id INTEGER PRIMARY KEY
+        )
+    """
+  )
   conn.commit()
   conn.close()
 
@@ -98,6 +105,23 @@ def get_user_orders_from_db(user_id: int):
   return orders
 
 
+def is_user_banned(user_id: int) -> bool:
+  conn = sqlite3.connect("bot_database.db")
+  cursor = conn.cursor()
+  cursor.execute("SELECT 1 FROM banned_users WHERE user_id = ?", (user_id,))
+  row = cursor.fetchone()
+  conn.close()
+  return row is not None
+
+
+def ban_user_in_db(user_id: int):
+  conn = sqlite3.connect("bot_database.db")
+  cursor = conn.cursor()
+  cursor.execute("INSERT OR IGNORE INTO banned_users (user_id) VALUES (?)", (user_id,))
+  conn.commit()
+  conn.close()
+
+
 class OrderForm(StatesGroup):
   service = State()
   target_username = State()
@@ -117,11 +141,20 @@ class VacancyForm(StatesGroup):
 
 # Словари и базы в памяти для отслеживания активности и реквизитов
 KNOWN_USERS = {}
+USER_MAPPING = {}      # Кэш для связи username <-> user_id для команды /ban
 ABANDONED_CHECKOUTS = {}
 CARD_DETAILS = []      # Список реквизитов карт/телефонов
 CARD_POINTERS = {}     # Индексы для циклического чередования реквизитов по странам
 
 router = Router()
+
+
+def track_user(user):
+  if user:
+    USER_MAPPING[user.id] = user.username
+    if user.username:
+      USER_MAPPING[user.username.lower().lstrip('@')] = user.id
+
 
 # === СЛОВАРЬ ВАЛЮТ ДЛЯ СТРАН ===
 CURRENCY_CONFIG = {
@@ -232,6 +265,8 @@ async def scheduled_broadcast(bot: Bot):
     await asyncio.sleep(3600)
     now = datetime.datetime.now()
     for user_id, last_time in list(KNOWN_USERS.items()):
+      if is_user_banned(user_id):
+        continue
       if last_time is None or (now - last_time).total_seconds() >= 24 * 3600:
         try:
           text, keyboard = get_dynamic_discount_content()
@@ -244,6 +279,8 @@ async def scheduled_broadcast(bot: Bot):
 async def delayed_abandoned_cart_reminder(bot: Bot, user_id: int):
   try:
     await asyncio.sleep(1800)
+    if is_user_banned(user_id):
+      return
     if user_id in ABANDONED_CHECKOUTS and ABANDONED_CHECKOUTS[user_id]:
       reminder_text = (
           "👋 <b>Завершить оформление?</b>\n\n"
@@ -313,7 +350,38 @@ def get_back_home_keyboard():
   return InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text="🏠 На главную", callback_data="back_home")]])
 
 
-# === АДМИНСКИЕ КОМАНДЫ ДЛЯ УПРАВЛЕНИЯ КАРТАМИ ===
+# === АДМИНСКИЕ КОМАНДЫ ДЛЯ УПРАВЛЕНИЯ КАРТАМИ И БАНОМ ===
+@router.message(Command("ban"))
+async def cmd_ban_user(message: Message):
+  if ADMIN_ID and message.from_user.id != ADMIN_ID:
+    return
+  args = message.text.split(maxsplit=1)
+  if len(args) < 2:
+    await message.reply(
+        "❌ Использование:\n"
+        "• По ID: `/ban 123456789`\n"
+        "• По юзернейму: `/ban @username`",
+        parse_mode="Markdown"
+    )
+    return
+
+  target = args[1].strip()
+  target_user_id = None
+
+  if target.isdigit():
+    target_user_id = int(target)
+  else:
+    clean_username = target.lstrip("@").lower()
+    target_user_id = USER_MAPPING.get(clean_username)
+
+  if not target_user_id:
+    await message.reply("❌ Пользователь не найден в памяти бота. Укажите числовой User ID.")
+    return
+
+  ban_user_in_db(target_user_id)
+  await message.reply(f"✅ Пользователь с ID <code>{target_user_id}</code> успешно забанен.", parse_mode="HTML")
+
+
 @router.message(Command("add"))
 async def cmd_add_card(message: Message):
   if ADMIN_ID and message.from_user.id != ADMIN_ID:
@@ -495,8 +563,13 @@ def get_admin_order_details_text(data):
 # === ОБРАБОТЧИКИ КОМАНД И МЕНЮ ===
 @router.message(CommandStart())
 async def cmd_start(message: Message, state: FSMContext):
-  await state.clear()
+  track_user(message.from_user)
   user_id = message.from_user.id
+  if is_user_banned(user_id):
+    await message.answer("❌ Вы заблокированы в этом боте.")
+    return
+
+  await state.clear()
   if user_id not in KNOWN_USERS:
     KNOWN_USERS[user_id] = datetime.datetime.now()
 
@@ -505,6 +578,10 @@ async def cmd_start(message: Message, state: FSMContext):
 
 @router.message(Command("order"))
 async def cmd_order(message: Message, state: FSMContext):
+  track_user(message.from_user)
+  if is_user_banned(message.from_user.id):
+    return
+
   await state.clear()
   await state.set_state(OrderForm.service)
   keyboard = InlineKeyboardMarkup(
@@ -527,6 +604,10 @@ async def cmd_order(message: Message, state: FSMContext):
 
 @router.message(Command("my_orders"))
 async def cmd_my_orders(message: Message, state: FSMContext):
+  track_user(message.from_user)
+  if is_user_banned(message.from_user.id):
+    return
+
   await state.clear()
   user_id = message.from_user.id
   orders = get_user_orders_from_db(user_id)
@@ -551,6 +632,10 @@ async def cmd_my_orders(message: Message, state: FSMContext):
 
 @router.message(Command("reputation"))
 async def cmd_reputation(message: Message, state: FSMContext):
+  track_user(message.from_user)
+  if is_user_banned(message.from_user.id):
+    return
+
   await state.clear()
   text, keyboard = get_reputation_text_and_keyboard()
   await message.answer(text, reply_markup=keyboard, parse_mode="HTML")
@@ -558,6 +643,10 @@ async def cmd_reputation(message: Message, state: FSMContext):
 
 @router.message(Command("support"))
 async def cmd_support(message: Message, state: FSMContext):
+  track_user(message.from_user)
+  if is_user_banned(message.from_user.id):
+    return
+
   await state.set_state(SupportForm.message_text)
   keyboard = InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text="⬅️ Отменить", callback_data="back_home")]])
   text = (
@@ -573,11 +662,19 @@ async def cmd_support(message: Message, state: FSMContext):
 
 @router.message(Command("vacancy"))
 async def cmd_vacancy(message: Message, state: FSMContext):
+  track_user(message.from_user)
+  if is_user_banned(message.from_user.id):
+    return
   await start_vacancy_process(message, state)
 
 
 @router.callback_query(F.data == "back_home")
 async def back_home(callback: CallbackQuery, state: FSMContext):
+  track_user(callback.from_user)
+  if is_user_banned(callback.from_user.id):
+    await callback.answer("❌ Вы заблокированы.", show_alert=True)
+    return
+
   user_id = callback.from_user.id
   ABANDONED_CHECKOUTS.pop(user_id, None)
 
@@ -588,6 +685,11 @@ async def back_home(callback: CallbackQuery, state: FSMContext):
 
 @router.callback_query(F.data == "about_service")
 async def show_about_service(callback: CallbackQuery):
+  track_user(callback.from_user)
+  if is_user_banned(callback.from_user.id):
+    await callback.answer("❌ Вы заблокированы.", show_alert=True)
+    return
+
   text, keyboard = get_reputation_text_and_keyboard()
   await callback.message.edit_text(text, reply_markup=keyboard, parse_mode="HTML")
   await callback.answer()
@@ -595,6 +697,11 @@ async def show_about_service(callback: CallbackQuery):
 
 @router.callback_query(F.data == "my_orders")
 async def show_my_orders(callback: CallbackQuery):
+  track_user(callback.from_user)
+  if is_user_banned(callback.from_user.id):
+    await callback.answer("❌ Вы заблокированы.", show_alert=True)
+    return
+
   user_id = callback.from_user.id
   orders = get_user_orders_from_db(user_id)
 
@@ -620,6 +727,11 @@ async def show_my_orders(callback: CallbackQuery):
 # === ПОДДЕРЖКА И АДМИН-ОТВЕТЫ ===
 @router.callback_query(F.data == "contact_admin")
 async def contact_admin_info(callback: CallbackQuery, state: FSMContext):
+  track_user(callback.from_user)
+  if is_user_banned(callback.from_user.id):
+    await callback.answer("❌ Вы заблокированы.", show_alert=True)
+    return
+
   await state.set_state(SupportForm.message_text)
   keyboard = InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text="⬅️ Отменить", callback_data="back_home")]])
   text = (
@@ -636,6 +748,10 @@ async def contact_admin_info(callback: CallbackQuery, state: FSMContext):
 
 @router.message(SupportForm.message_text)
 async def process_support_message(message: Message, state: FSMContext):
+  track_user(message.from_user)
+  if is_user_banned(message.from_user.id):
+    return
+
   user = message.from_user
   text_content = message.text or message.caption or "Без текста"
   photo_id = message.photo[-1].file_id if message.photo else None
@@ -669,6 +785,10 @@ async def process_support_message(message: Message, state: FSMContext):
 # === ВАКАНСИИ (ЗАПОЛНЕНИЕ ЗАЯВКИ В 4 ШАГА) ===
 @router.callback_query(F.data == "vacancy_start")
 async def vacancy_callback(callback: CallbackQuery, state: FSMContext):
+  track_user(callback.from_user)
+  if is_user_banned(callback.from_user.id):
+    await callback.answer("❌ Вы заблокированы.", show_alert=True)
+    return
   await start_vacancy_process(callback.message, state, edit=True)
   await callback.answer()
 
@@ -696,6 +816,10 @@ async def start_vacancy_process(message: Message, state: FSMContext, edit: bool 
 
 @router.message(VacancyForm.skills, F.text)
 async def process_vacancy_skills(message: Message, state: FSMContext):
+  track_user(message.from_user)
+  if is_user_banned(message.from_user.id):
+    return
+
   await state.update_data(vacancy_skills=message.text.strip())
   await state.set_state(VacancyForm.experience)
   
@@ -710,6 +834,10 @@ async def process_vacancy_skills(message: Message, state: FSMContext):
 
 @router.message(VacancyForm.experience, F.text)
 async def process_vacancy_experience(message: Message, state: FSMContext):
+  track_user(message.from_user)
+  if is_user_banned(message.from_user.id):
+    return
+
   await state.update_data(vacancy_experience=message.text.strip())
   await state.set_state(VacancyForm.salary)
   
@@ -723,6 +851,10 @@ async def process_vacancy_experience(message: Message, state: FSMContext):
 
 @router.message(VacancyForm.salary, F.text)
 async def process_vacancy_salary(message: Message, state: FSMContext):
+  track_user(message.from_user)
+  if is_user_banned(message.from_user.id):
+    return
+
   await state.update_data(vacancy_salary=message.text.strip())
   await state.set_state(VacancyForm.username)
   
@@ -736,6 +868,10 @@ async def process_vacancy_salary(message: Message, state: FSMContext):
 
 @router.message(VacancyForm.username, F.text)
 async def process_vacancy_final(message: Message, state: FSMContext):
+  track_user(message.from_user)
+  if is_user_banned(message.from_user.id):
+    return
+
   await state.update_data(vacancy_username=message.text.strip())
   data = await state.get_data()
   user = message.from_user
@@ -815,6 +951,11 @@ async def admin_reply_handler(message: Message):
 # === ЦИФРОВОЙ КАТАЛОГ УСЛУГ ===
 @router.callback_query(F.data.in_(["catalog_services", "start_order"]))
 async def process_catalog_services(callback: CallbackQuery, state: FSMContext):
+  track_user(callback.from_user)
+  if is_user_banned(callback.from_user.id):
+    await callback.answer("❌ Вы заблокированы.", show_alert=True)
+    return
+
   user_id = callback.from_user.id
   ABANDONED_CHECKOUTS.pop(user_id, None)
 
@@ -841,6 +982,11 @@ async def process_catalog_services(callback: CallbackQuery, state: FSMContext):
 
 @router.callback_query(OrderForm.service, F.data.startswith("srv_"))
 async def process_service(callback: CallbackQuery, state: FSMContext):
+  track_user(callback.from_user)
+  if is_user_banned(callback.from_user.id):
+    await callback.answer("❌ Вы заблокированы.", show_alert=True)
+    return
+
   parts = callback.data.split("_")
   price = int(parts[-1])
   service_name = " ".join(parts[1:-1]).replace("_", " ")
@@ -859,6 +1005,10 @@ async def process_service(callback: CallbackQuery, state: FSMContext):
 
 @router.message(OrderForm.target_username, F.text)
 async def process_target_username(message: Message, state: FSMContext):
+  track_user(message.from_user)
+  if is_user_banned(message.from_user.id):
+    return
+
   target_val = message.text.strip()
   await state.update_data(target_username=target_val, target_phone="-")
   data = await state.get_data()
@@ -880,6 +1030,11 @@ async def process_target_username(message: Message, state: FSMContext):
 # === ОПЛАТА И ШЛЮЗЫ ===
 @router.callback_query(F.data == "go_to_payment")
 async def process_go_to_payment(callback: CallbackQuery, state: FSMContext):
+  track_user(callback.from_user)
+  if is_user_banned(callback.from_user.id):
+    await callback.answer("❌ Вы заблокированы.", show_alert=True)
+    return
+
   user_id = callback.from_user.id
   
   if user_id in ABANDONED_CHECKOUTS:
@@ -934,6 +1089,11 @@ async def process_go_to_payment(callback: CallbackQuery, state: FSMContext):
 
 @router.callback_query(F.data.startswith("pay_currency_"))
 async def process_pay_currency(callback: CallbackQuery, state: FSMContext):
+  track_user(callback.from_user)
+  if is_user_banned(callback.from_user.id):
+    await callback.answer("❌ Вы заблокированы.", show_alert=True)
+    return
+
   curr_code = callback.data.split("_")[2] # RUB, BYN, UAH, KZT
   config = CURRENCY_CONFIG.get(curr_code, {"country": "Россия", "name": "Рубли", "symbol": "₽"})
   country = config["country"]
@@ -950,15 +1110,6 @@ async def process_pay_currency(callback: CallbackQuery, state: FSMContext):
   card = get_next_card(country)
 
   if not card:
-    if curr_code == "RUB":
-      payment_type_desc = "рублях/СБП"
-    elif curr_code == "KZT":
-      payment_type_desc = "тенге/Kaspi"
-    elif curr_code == "UAH":
-      payment_type_desc = "гривнах"
-    else:
-      payment_type_desc = "BYN"
-
     text = (
         f"❌ <b>Реквизиты временно недоступны</b>\n\n"
         f"К сожалению, в данный момент реквизиты для оплаты в <b>{config['name']}</b> недоступны.\n\n"
@@ -983,7 +1134,6 @@ async def process_pay_currency(callback: CallbackQuery, state: FSMContext):
   }
   header_title = header_map.get(curr_code, "Оплата по реквизитам")
 
-  # ОБНОВЛЕННЫЙ БЛОК С ЧЕТКИМ ОТОБРАЖЕНИЕМ СУММЫ В USD, КУРСА И ИТОГО К ОПЛАТЕ В МЕСТНОЙ ВАЛЮТЕ
   text = (
       f"💳 <b>{header_title}</b>\n\n"
       f"• Сумма в долларах: <b>{total_price}$</b>\n"
@@ -1004,6 +1154,11 @@ async def process_pay_currency(callback: CallbackQuery, state: FSMContext):
 
 @router.callback_query(F.data == "payment_help_manager")
 async def process_payment_help_manager(callback: CallbackQuery):
+  track_user(callback.from_user)
+  if is_user_banned(callback.from_user.id):
+    await callback.answer("❌ Вы заблокированы.", show_alert=True)
+    return
+
   if ADMIN_ID:
     try:
       user = callback.from_user
@@ -1016,6 +1171,11 @@ async def process_payment_help_manager(callback: CallbackQuery):
 
 @router.callback_query(F.data == "pay_cryptobot")
 async def process_pay_cryptobot(callback: CallbackQuery, state: FSMContext):
+  track_user(callback.from_user)
+  if is_user_banned(callback.from_user.id):
+    await callback.answer("❌ Вы заблокированы.", show_alert=True)
+    return
+
   user_id = callback.from_user.id
   ABANDONED_CHECKOUTS.pop(user_id, None)
 
@@ -1041,6 +1201,11 @@ async def process_pay_cryptobot(callback: CallbackQuery, state: FSMContext):
 
 @router.callback_query(F.data == "cryptobot_check_success")
 async def process_cryptobot_check(callback: CallbackQuery, state: FSMContext):
+  track_user(callback.from_user)
+  if is_user_banned(callback.from_user.id):
+    await callback.answer("❌ Вы заблокированы.", show_alert=True)
+    return
+
   data = await state.get_data()
   inv_id = data.get("invoice_id")
   
@@ -1082,6 +1247,11 @@ async def process_cryptobot_check(callback: CallbackQuery, state: FSMContext):
 
 @router.callback_query(F.data == "crypto_expert")
 async def process_crypto_expert(callback: CallbackQuery, state: FSMContext):
+  track_user(callback.from_user)
+  if is_user_banned(callback.from_user.id):
+    await callback.answer("❌ Вы заблокированы.", show_alert=True)
+    return
+
   user_id = callback.from_user.id
   ABANDONED_CHECKOUTS.pop(user_id, None)
 
@@ -1100,6 +1270,11 @@ async def process_crypto_expert(callback: CallbackQuery, state: FSMContext):
 
 @router.callback_query(F.data.startswith("pay_crypto_"))
 async def process_pay_crypto(callback: CallbackQuery, state: FSMContext):
+  track_user(callback.from_user)
+  if is_user_banned(callback.from_user.id):
+    await callback.answer("❌ Вы заблокированы.", show_alert=True)
+    return
+
   net_key = callback.data.split("_")[2]
   net_info = CRYPTO_NETWORKS.get(net_key)
   if not net_info:
@@ -1126,6 +1301,11 @@ async def process_pay_crypto(callback: CallbackQuery, state: FSMContext):
 
 @router.callback_query(F.data == "ask_for_receipt")
 async def ask_for_receipt(callback: CallbackQuery, state: FSMContext):
+  track_user(callback.from_user)
+  if is_user_banned(callback.from_user.id):
+    await callback.answer("❌ Вы заблокированы.", show_alert=True)
+    return
+
   await state.set_state(OrderForm.receipt)
   text = "🧾 <b>Подтверждение платежа</b>\n\nОтправьте в чат <b>скриншот или фотографию чека</b> о выполненном переводе для проверки."
   await callback.message.edit_text(text, parse_mode="HTML")
@@ -1134,6 +1314,10 @@ async def ask_for_receipt(callback: CallbackQuery, state: FSMContext):
 
 @router.message(OrderForm.receipt, F.photo)
 async def process_receipt_photo(message: Message, state: FSMContext):
+  track_user(message.from_user)
+  if is_user_banned(message.from_user.id):
+    return
+
   user = message.from_user
   ABANDONED_CHECKOUTS.pop(user.id, None)
   data = await state.get_data()
@@ -1171,6 +1355,9 @@ async def process_receipt_photo(message: Message, state: FSMContext):
 
 @router.message(OrderForm.receipt, ~F.photo)
 async def process_receipt_invalid(message: Message):
+  track_user(message.from_user)
+  if is_user_banned(message.from_user.id):
+    return
   await message.answer("📎 Пожалуйста, прикрепите <b>скриншот или фото чека изображением</b>. Текстовые сообщения не принимаются.")
 
 
