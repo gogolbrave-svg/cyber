@@ -983,13 +983,16 @@ async def process_pay_currency(callback: CallbackQuery, state: FSMContext):
   }
   header_title = header_map.get(curr_code, "Оплата по реквизитам")
 
+  # ОБНОВЛЕННЫЙ БЛОК С ЧЕТКИМ ОТОБРАЖЕНИЕМ СУММЫ В USD, КУРСА И ИТОГО К ОПЛАТЕ В МЕСТНОЙ ВАЛЮТЕ
   text = (
       f"💳 <b>{header_title}</b>\n\n"
-      f"• Сумма к оплате: <b>{total_price}$</b> <i>(≈ {local_amount:,} {config['symbol']})</i>\n\n"
-      f"⚠️ <b>Внимание!</b> Перевод осуществлять <b>строго</b> на указанные реквизиты:\n\n"
+      f"• Сумма в долларах: <b>{total_price}$</b>\n"
+      f"• Актуальный курс: <b>1 USD = {rate:.2f} {config['symbol']}</b>\n"
+      f"• <b>Итого к оплате: {local_amount:,} {config['symbol']}</b>\n\n"
+      f"⚠️ <b>Внимание!</b> Переводите средства <b>строго</b> на указанные реквизиты ниже:\n\n"
       f"<b>Банк:</b> {card['bank']}\n"
       f"<b>Реквизиты:</b> <code>{card['details']}</code>\n\n"
-      "💡 <i>После перевода средств нажмите кнопку ниже, чтобы прикрепить чек.</i>"
+      "💡 <i>После успешного перевода нажмите кнопку ниже, чтобы прикрепить чек.</i>"
   )
   keyboard = InlineKeyboardMarkup(inline_keyboard=[
       [InlineKeyboardButton(text="✅ Прикрепить чек", callback_data="ask_for_receipt")],
